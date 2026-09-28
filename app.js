@@ -803,5 +803,13 @@ render();
 refresh();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  // When a new version takes over, reload once so the update shows immediately.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    reloaded = true; location.reload();
+  });
+  navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' })
+    .then((reg) => reg.update()).catch(() => {});
 }
