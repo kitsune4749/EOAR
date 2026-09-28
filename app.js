@@ -1,4 +1,4 @@
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 import { COMMUNITIES, REGIONS, byId, nearestCommunity } from './communities.js';
 import { getWeather, getAirModel, getOfficialAqhi, nearestStation, getGooglePollen, pruneCache } from './api.js';
 import {
@@ -224,7 +224,7 @@ function renderHeader() {
   const options = REGIONS.map((r) => `<optgroup label="${esc(r)}">${COMMUNITIES.filter((x) => x.region === r)
     .map((x) => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
   $('#topbar').innerHTML = `
-    <div class="brand"><img src="icons/icon-192.png" alt="" width="28" height="28"><span>EOAR</span><small>Eastern Ontario Air &amp; Allergy</small></div>
+    <div class="brand"><img src="icon-192.png" alt="" width="28" height="28"><span>EOAR</span><small>Eastern Ontario Air &amp; Allergy</small></div>
     <div class="place-row">
       <label class="select-wrap"><span class="sr">Community</span><select id="communitySelect">${options}</select></label>
       <button class="icon-btn ${fav ? 'starred' : ''}" id="favBtn" aria-label="${fav ? 'Remove from' : 'Add to'} favourites" title="Favourite">${fav ? '★' : '☆'}</button>

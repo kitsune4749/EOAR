@@ -1,7 +1,7 @@
 // Data fetching with a small localStorage cache so the app works offline
 // and doesn't hammer the free APIs.
 import { distanceKm } from './communities.js';
-import { CONFIG } from '../config.js';
+import { CONFIG } from './config.js';
 
 const TZ = 'America/Toronto';
 const CACHE_PREFIX = 'eoar4_cache:';

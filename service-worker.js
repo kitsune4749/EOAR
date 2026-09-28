@@ -1,9 +1,9 @@
 // Caches the app itself so it opens offline. Live data is cached separately by the app.
-const CACHE = 'eoar-v4.0.0';
+const CACHE = 'eoar-v4.0.1';
 const SHELL = [
   './', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
-  'js/app.js', 'js/api.js', 'js/models.js', 'js/communities.js',
-  'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
+  'app.js', 'api.js', 'models.js', 'communities.js',
+  'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {
