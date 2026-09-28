@@ -1,5 +1,5 @@
 // Caches the app itself so it opens offline. Live data is cached separately by the app.
-const CACHE = 'eoar-v4.0.1';
+const CACHE = 'eoar-v4.0.2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'app.js', 'api.js', 'models.js', 'communities.js',

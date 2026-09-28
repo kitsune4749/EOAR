@@ -113,7 +113,8 @@ function assemble(community, weatherR, airR, stations, gPollen) {
   const w = weatherR?.data?.[0];
   const air = airR?.data?.[0];
   const aq = hourlyAqhi(air);
-  const station = stations ? nearestStation(stations, community.lat, community.lon) : null;
+  const station = stations ? nearestStation(stations.filter((x) => x.aqhi != null), community.lat, community.lon) : null;
+  const fcStation = stations ? nearestStation(stations.filter((x) => Object.keys(x.forecast || {}).length), community.lat, community.lon) : null;
   const fresh = station?.obsTime && Date.now() - new Date(station.obsTime) < 4 * 3600 * 1000;
 
   let aqNow = null;
@@ -130,7 +131,7 @@ function assemble(community, weatherR, airR, stations, gPollen) {
       day.pollen.main = Object.entries({ tree: day.pollen.tree, grass: day.pollen.grass, weed: day.pollen.weed }).sort((a, b) => b[1] - a[1])[0][0];
       day.pollenSource = 'google';
     } else day.pollenSource = 'estimate';
-    const off = station?.forecast?.[day.date];
+    const off = fcStation?.forecast?.[day.date];
     day.aqhi = off ?? aq.dailyMax[day.date] ?? null;
     day.aqhiSource = off != null ? 'official' : day.aqhi != null ? 'model' : null;
     day.outlook = outlook(day.pollen.max, day.mold, day.aqhi);
@@ -493,7 +494,7 @@ function renderMore() {
     </section>
     <section class="card about">
       <div class="tile-h">Where the numbers come from</div>
-      <p><b>Air quality (AQHI)</b>: Environment and Climate Change Canada’s official Air Quality Health Index from the nearest monitoring station (Ottawa, Kingston, Cornwall, Brockville, Belleville, Petawawa and others). Where no station is close, or for later forecast days, the AQHI is calculated from the CAMS air quality model via Open-Meteo.</p>
+      <p><b>Air quality (AQHI)</b>: Environment and Climate Change Canada’s official Air Quality Health Index from the nearest reporting station (Ottawa, Cornwall, Kingston or Belleville), used within about 70 km. Farther away (e.g. Pembroke, Renfrew, Hawkesbury), and for forecast days beyond tomorrow, the AQHI is calculated with the same formula from the CAMS air quality model via Open-Meteo.</p>
       <p><b>Pollen</b>: ${CONFIG.GOOGLE_POLLEN_KEY ? 'Google Pollen API.' : 'an estimate based on typical Eastern Ontario tree, grass and ragweed seasons, adjusted daily for rain, temperature, wind and the first hard frost. No free public pollen feed exists for this region.'}</p>
       <p><b>Mould</b>: an estimate of outdoor spores based on season, temperature, humidity, recent rain, snow cover and fall leaf litter. Few places publish mould counts, so treat it as a guide.</p>
       <p><b>Weather</b>: Open-Meteo (Environment Canada GEM and other models).</p>

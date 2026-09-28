@@ -85,17 +85,20 @@ const pick = (o, ...keys) => { for (const k of keys) if (o?.[k] != null) return 
 function stationFrom(f) {
   const p = f.properties || {};
   const [lon, lat] = f.geometry?.coordinates || [pick(p, 'longitude', 'lon'), pick(p, 'latitude', 'lat')];
+  const name = pick(p, 'location_name_en', 'location_name', 'name');
+  // Observations and forecasts use different IDs for the same city, so match on the name.
   return {
-    id: pick(p, 'location_id', 'location_name_en', 'location_name') || `${lat},${lon}`,
+    id: name ? String(name).trim().toLowerCase() : pick(p, 'location_id') || `${lat},${lon}`,
     name: pick(p, 'location_name_en', 'location_name', 'name') || 'AQHI station',
     lat: Number(lat), lon: Number(lon),
-    aqhi: p.aqhi != null ? Number(p.aqhi) : null,
+    // ECCC reports decimals (e.g. 1.68); the public index is a whole number, minimum 1.
+    aqhi: p.aqhi != null && !Number.isNaN(Number(p.aqhi)) ? Math.max(1, Math.round(Number(p.aqhi))) : null,
   };
 }
 
 export async function getOfficialAqhi({ force } = {}) {
   const obsUrl = `${ECCC}/aqhi-observations-realtime/items?f=json&lang=en&bbox=${BBOX}&sortby=-observation_datetime&limit=200`;
-  const fcUrl = `${ECCC}/aqhi-forecasts-realtime/items?f=json&lang=en&bbox=${BBOX}&sortby=-publication_datetime&limit=500`;
+  const fcUrl = `${ECCC}/aqhi-forecasts-realtime/items?f=json&lang=en&bbox=${BBOX}&sortby=-publication_datetime&limit=1500`;
   const [obsR, fcR] = await Promise.allSettled([cachedJson(obsUrl, { force }), cachedJson(fcUrl, { force })]);
 
   const stations = new Map();
@@ -105,7 +108,7 @@ export async function getOfficialAqhi({ force } = {}) {
       const time = f.properties?.observation_datetime;
       if (s.aqhi == null || !Number.isFinite(s.lat)) continue;
       const prev = stations.get(s.id);
-      if (!prev || (time && time > prev.obsTime)) stations.set(s.id, { ...s, obsTime: time, forecast: {} });
+      if (!prev || (time && time > prev.obsTime)) stations.set(s.id, { ...s, obsTime: time, forecast: prev?.forecast || {} });
     }
   }
   if (fcR.status === 'fulfilled') {
@@ -122,7 +125,7 @@ export async function getOfficialAqhi({ force } = {}) {
       const when = p.forecast_datetime ? new Date(p.forecast_datetime) : null;
       if (!when || Number.isNaN(+when)) continue;
       const date = when.toLocaleDateString('en-CA', { timeZone: TZ });
-      if (!stations.has(s.id)) stations.set(s.id, { ...s, aqhi: null, obsTime: null, forecast: {} });
+      if (!stations.has(s.id)) stations.set(s.id, { ...s, aqhi: null, obsTime: null, forecast: {}, forecastOnly: true });
       const st = stations.get(s.id);
       st.forecast[date] = Math.max(st.forecast[date] ?? 0, s.aqhi);
     }
