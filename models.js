@@ -37,10 +37,10 @@ const SEASONS = {
 // These are informed estimates (ragweed and grass thrive on open farmland and roadsides;
 // forests add tree pollen; city cores have less of everything but street trees).
 export const LAND_FACTORS = {
-  urban:    { tree: 0.9,  grass: 0.8,  weed: 0.7,  mold: 0.9 },
-  suburban: { tree: 1.0,  grass: 0.95, weed: 0.9,  mold: 1.0 },
-  farm:     { tree: 0.9,  grass: 1.15, weed: 1.3,  mold: 1.1 },
-  mixed:    { tree: 1.1,  grass: 1.05, weed: 1.05, mold: 1.05 },
+  urban:    { tree: 0.9,  grass: 0.8,  weed: 0.7,  mold: 0.75 },
+  suburban: { tree: 1.0,  grass: 0.95, weed: 0.9,  mold: 0.9 },
+  farm:     { tree: 0.9,  grass: 1.15, weed: 1.3,  mold: 1.2 },   // crop residue, hay, harvest
+  mixed:    { tree: 1.1,  grass: 1.05, weed: 1.05, mold: 1.1 },
   forest:   { tree: 1.25, grass: 0.8,  weed: 0.75, mold: 1.05 },
 };
 
@@ -122,6 +122,10 @@ export function estimateMold(day, ctx = {}) {
   else if (rh < 60) v *= 0.9;
   else if (rh >= 85) v *= 1.3;
   else if (rh >= 72) v *= 1.15;
+  // A downpour washes the common outdoor spores (Alternaria, Cladosporium) out of the air;
+  // they rebound in the days after, which rainPrev3 captures.
+  if (day.precip >= 10) v *= 0.55;
+  else if (day.precip >= 5) v *= 0.7;
   if ((day.rainPrev3 ?? 0) >= 10) v *= 1.2;
   else if ((day.rainPrev3 ?? 0) >= 3) v *= 1.1;
   // Fall leaf litter is a big spore source in Eastern Ontario.
@@ -154,7 +158,10 @@ export const aqhiText = (v) => (v == null ? '–' : v > 10 ? '10+' : String(v));
 export function outlook(pollenMax, mold, aqhi, farm = 0) {
   // Farm dust and ammonia are asthma triggers, weighted a little below pollen/mould
   // because they're the least certain estimate.
-  let s = Math.max(pollenMax, mold, farm * 0.85);
+  // Worst trigger, plus a little for a second one at the same time
+  // (e.g. ragweed + mould + harvest dust together is worse than any one alone).
+  const t = [pollenMax, mold, farm * 0.85].sort((x, y) => y - x);
+  let s = t[0] + 0.15 * t[1];
   if (aqhi != null) {
     if (aqhi >= 7) s = Math.max(s, 3);
     else if (aqhi >= 4) s = Math.min(4, s + 0.5);

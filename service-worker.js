@@ -1,7 +1,7 @@
 // Offline support. App files are fetched fresh from the network first (so updates show
 // up right away) and the saved copy is only used when there's no connection.
 // Live data (air quality, weather) is cached separately by the app.
-const CACHE = 'eoar-v4.3.0';
+const CACHE = 'eoar-v4.3.2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'app.js', 'api.js', 'models.js', 'communities.js', 'eccc-model.js',

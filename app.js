@@ -253,8 +253,8 @@ function tips(day, aqNow) {
 function farmCard(s, day) {
   const f = day.farm;
   if (!f || s.community.far) return '';
-  return `<section class="card">
-      <div class="tile-h">Farm activity <button class="info" data-info="farm" aria-label="About farm activity">?</button></div>
+  return `<section class="card est-card">
+      <div class="tile-h">Farm activity <span class="badge est">Estimate</span> <button class="info" data-info="farm" aria-label="About farm activity">?</button></div>
       <div class="prow"><span><b>${esc(f.stage.name)}</b></span>${levelPill(f.level)}</div>${bar(f.level)}
       <p class="small" style="margin:0">${esc(f.stage.what)}${f.notes.length ? ' ' + esc(f.notes.join(' ')) : ''}</p>
       <div class="src">Estimate from the Eastern Ontario farm calendar, today’s weather and ${LAND_LABELS[s.community.land]}. Not part of the official AQHI.</div>
@@ -270,14 +270,14 @@ function compareCard(s, c) {
   const pa = s.aqNow?.pollutants, pb = c.aqNow?.pollutants;
   const coarse = (p) => (p?.pm10 != null && p?.pm != null ? Math.max(0, p.pm10 - p.pm) : null);
   const rows = [
+    { label: 'AQHI', a: s.aqNow?.value, b: c.aqNow?.value, kind: 'aqhi', group: 'measured' },
+    { label: 'Fine particles', a: pa?.pm, b: pb?.pm, kind: 'num', unit: 'µg/m³', group: 'measured' },
+    { label: 'Coarse dust', a: coarse(pa), b: coarse(pb), kind: 'num', unit: 'µg/m³', group: 'measured' },
+    { label: 'Ozone', a: pa?.o3, b: pb?.o3, kind: 'num', unit: 'ppb', group: 'measured', digits: 0 },
+    { label: 'Traffic NO₂', a: pa?.no2, b: pb?.no2, kind: 'num', unit: 'ppb', group: 'measured' },
     { label: 'Pollen', a: a.pollen.max, b: b.pollen.max, kind: 'level', group: 'allergen' },
     { label: 'Mould spores', a: a.mold, b: b.mold, kind: 'level', group: 'allergen' },
     { label: 'Farm dust & ammonia', a: a.farm.level, b: b.farm.level, kind: 'level', group: 'allergen' },
-    { label: 'Coarse dust', a: coarse(pa), b: coarse(pb), kind: 'num', unit: 'µg/m³', group: 'measured' },
-    { label: 'Fine particles', a: pa?.pm, b: pb?.pm, kind: 'num', unit: 'µg/m³', group: 'measured' },
-    { label: 'Ozone', a: pa?.o3, b: pb?.o3, kind: 'num', unit: 'ppb', group: 'measured', digits: 0 },
-    { label: 'Traffic NO₂', a: pa?.no2, b: pb?.no2, kind: 'num', unit: 'ppb', group: 'measured' },
-    { label: 'AQHI', a: s.aqNow?.value, b: c.aqNow?.value, kind: 'aqhi', group: 'measured' },
   ].filter((r) => r.a != null && r.b != null);
   const cell = (r, v) => r.kind === 'level' ? shortPill(v) : r.kind === 'aqhi' ? aqPill(v) : `<b>${v.toFixed(r.digits ?? 1)}</b>`;
   const diff = (r) => {
@@ -288,21 +288,33 @@ function compareCard(s, c) {
   };
   const marks = { here: `<span class="cmp up" title="Higher in ${esc(here)}">▲ ${esc(here)}</span>`, city: `<span class="cmp dn" title="Higher in Ottawa">▲ ${city}</span>`, same: '<span class="cmp eq">≈ same</span>' };
   const lc = (s) => s.replace(/\b[A-Z][a-z]+/g, (w) => w.toLowerCase()); // keep AQHI, NO₂
-  const higherHere = rows.filter((r) => diff(r) === 'here').map((r) => lc(r.label));
-  const higherCity = rows.filter((r) => diff(r) === 'city').map((r) => lc(r.label.replace('Traffic ', 'traffic ')));
   const list = (x) => x.length < 2 ? x.join('') : `${x.slice(0, -1).join(', ')} and ${x[x.length - 1]}`;
-  let story = '';
-  if (higherHere.length) story += `Higher in ${esc(here)} today: <b>${esc(list(higherHere))}</b>. `;
-  if (higherCity.length) story += `Higher downtown: <b>${esc(list(higherCity))}</b>.`;
-  if (!story) story = 'Conditions are about the same in both places today.';
+  const summarize = (group) => {
+    const rs = rows.filter((r) => r.group === group);
+    const hh = rs.filter((r) => diff(r) === 'here').map((r) => lc(r.label));
+    const hc = rs.filter((r) => diff(r) === 'city').map((r) => lc(r.label.replace('Traffic ', 'traffic ')));
+    const parts = [];
+    if (hh.length) parts.push(`higher in ${esc(here)}: <b>${esc(list(hh))}</b>`);
+    if (hc.length) parts.push(`higher downtown: <b>${esc(list(hc))}</b>`);
+    return parts.length ? parts.join('; ') : 'about the same in both places';
+  };
+  const section = (group, title, note) => {
+    const rs = rows.filter((r) => r.group === group);
+    if (!rs.length) return '';
+    return `<div class="cmp-sec ${group === 'measured' ? 'data' : 'est'}"><b>${title}</b> <span class="muted">${note}</span></div>
+      ${rs.map((r) => `<div class="cmp-row"><span>${r.label}${r.unit ? ` <small>${r.unit}</small>` : ''}</span><span>${cell(r, r.a)}</span><span>${cell(r, r.b)}</span>${marks[diff(r)]}</div>`).join('')}`;
+  };
   return `<section class="card">
       <div class="tile-h">${esc(here)} vs downtown Ottawa <button class="info" data-info="compare" aria-label="About this comparison">?</button></div>
-      <p class="small" style="margin:0 0 8px">${story}</p>
+      <ul class="cmp-story">
+        <li><span class="badge data">ECCC data</span> ${summarize('measured')}.</li>
+        <li><span class="badge est">Estimates</span> ${summarize('allergen')}.</li>
+      </ul>
       <div class="cmp-table">
         <div class="cmp-h"><span></span><span>${esc(here)}</span><span>Ottawa</span><span></span></div>
-        ${rows.map((r) => `<div class="cmp-row ${r.group}"><span>${r.label}${r.unit ? ` <small>${r.unit}</small>` : ''}</span><span>${cell(r, r.a)}</span><span>${cell(r, r.b)}</span>${marks[diff(r)]}</div>`).join('')}
+        ${section('measured', 'Environment Canada data', 'station readings and air quality analysis')}
+        ${section('allergen', 'App estimates', 'not measured')}
       </div>
-      <div class="src">Pollen, mould and farm dust: the app’s estimates. Dust, particles, ozone, NO₂ and AQHI: Environment Canada’s local air quality analysis.</div>
     </section>`;
 }
 
@@ -353,35 +365,34 @@ function renderToday() {
         <div class="gauge" aria-hidden="true">${[1, 2, 3, 4].map((i) => `<i class="${day.outlook >= i - 0.5 ? 'on' : ''}"></i>`).join('')}</div>
       </div>
       <p class="hero-text">${esc(summarySentence(day, aq))}</p>
+      <p class="hero-note">Combines Environment Canada air quality data with this app’s pollen, mould and farm estimates.</p>
     </section>
 
-    <div class="grid2">
-      <section class="card tile">
-        <div class="tile-h">Air quality <button class="info" data-info="aqhi" aria-label="About AQHI">?</button></div>
-        <div class="big ${aqRisk.cls}-text">${aqhiText(aq?.value)}</div>
-        <div class="tile-sub"><span class="pill ${aqRisk.cls}">${aqRisk.label}</span></div>
-        ${pol ? `<div class="pollutants"><span>Fine particles <b>${pol.pm.toFixed(1)}</b> µg/m³</span><span>Ozone <b>${Math.round(pol.o3)}</b> ppb</span><span>NO₂ <b>${pol.no2.toFixed(1)}</b> ppb</span>${pol.pm10 != null ? `<span>Coarse dust <b>${Math.max(0, pol.pm10 - pol.pm).toFixed(1)}</b> µg/m³</span>` : ''}</div>` : ''}
-        <div class="src">AQHI · ${aqSrc}</div>
-      </section>
-      <section class="card tile">
-        <div class="tile-h">Mould spores <button class="info" data-info="mold" aria-label="About mould">?</button></div>
-        <div class="big">${levelPill(day.mold)}</div>
-        ${bar(day.mold)}
-        <div class="src">Estimate from humidity, rain, season &amp; ${LAND_LABELS[s.community.land]}</div>
-      </section>
-    </div>
+    <div class="sec"><h3>Environment Canada data</h3><p>${aq?.source === 'model' ? 'No Environment Canada reading is available right now, so this is a modelled value.' : 'Station measurements, or Environment Canada’s air quality analysis where there’s no station.'}</p></div>
+    <section class="card data-card">
+      <div class="tile-h">Air quality (AQHI) ${aq?.source === 'model' ? '<span class="badge est">Modelled</span>' : '<span class="badge data">ECCC data</span>'} <button class="info" data-info="aqhi" aria-label="About AQHI">?</button></div>
+      <div class="aq-row"><div class="big ${aqRisk.cls}-text">${aqhiText(aq?.value)}</div><span class="pill ${aqRisk.cls}">${aqRisk.label}</span></div>
+      ${pol ? `<div class="pollutants"><span>Fine particles <b>${pol.pm.toFixed(1)}</b> µg/m³</span><span>Ozone <b>${Math.round(pol.o3)}</b> ppb</span><span>NO₂ <b>${pol.no2.toFixed(1)}</b> ppb</span>${pol.pm10 != null ? `<span>Coarse dust <b>${Math.max(0, pol.pm10 - pol.pm).toFixed(1)}</b> µg/m³</span>` : ''}</div>` : ''}
+      <div class="src">Source: ${aqSrc}</div>
+    </section>
 
-    <section class="card">
-      <div class="tile-h">Pollen <button class="info" data-info="pollen" aria-label="About pollen">?</button></div>
+    <div class="sec est"><h3>App estimates</h3><p>Calculated by this app from the season, weather and surrounding land. They are not measurements: no public pollen, mould or farm-dust counts exist for this area.</p></div>
+    <section class="card est-card">
+      <div class="tile-h">Pollen <span class="badge est">Estimate</span> <button class="info" data-info="pollen" aria-label="About pollen">?</button></div>
       ${['tree', 'grass', 'weed'].map((k) => `
         <div class="prow"><span>${POLLEN_NAMES[k]}</span>${levelPill(day.pollen[k])}</div>${bar(day.pollen[k])}`).join('')}
       <div class="src">${pSrc}</div>
     </section>
-
+    <section class="card est-card">
+      <div class="tile-h">Mould spores <span class="badge est">Estimate</span> <button class="info" data-info="mold" aria-label="About mould">?</button></div>
+      <div class="prow"><span>Outdoor spores</span>${levelPill(day.mold)}</div>${bar(day.mold)}
+      <div class="src">Estimate from humidity, rain, season &amp; ${LAND_LABELS[s.community.land]}</div>
+    </section>
     ${farmCard(s, day)}
     ${compareCard(s, state.compare)}
 
     <section class="card weather">
+      <div class="tile-h">Weather <span class="muted small" style="font-weight:400">Open-Meteo forecast</span></div>
       <div class="wx-main"><span class="wx-ico">${wx(cur.weather_code ?? day.code)[1]}</span>
         <div><div class="wx-t">${cur.temperature_2m != null ? Math.round(cur.temperature_2m) + '°' : '–'}</div>
         <div class="muted">${wx(cur.weather_code ?? day.code)[0]} · feels ${cur.apparent_temperature != null ? Math.round(cur.apparent_temperature) + '°' : '–'}</div></div></div>
@@ -399,7 +410,7 @@ function renderToday() {
     </section>
 
     <button class="btn primary" data-go="journal">＋ Log how you feel today</button>
-    <p class="disclaimer">Pollen and mould levels are estimates, not measurements. This app isn’t medical advice. Follow your doctor’s or allergist’s guidance.</p>`;
+    <p class="disclaimer">Pollen, mould and farm activity are estimates, not measurements. This app isn’t medical advice. Follow your doctor’s or allergist’s guidance.</p>`;
 }
 
 function renderForecast() {
@@ -408,6 +419,7 @@ function renderForecast() {
   if (s.error) return errorCard();
   return `${statusLine(s)}
     <h2 class="h">7-day outlook · ${esc(s.community.name)}</h2>
+    <p class="muted small" style="margin:0">AQHI: Environment Canada forecast (about 3 days), then a global model. Tree, grass, weed, mould and the overall rating use this app’s estimates.</p>
     <div class="legend">${[1, 2, 3, 4].map((i) => levelPill(i)).join('')}</div>
     ${s.days.map((d, i) => `
       <section class="card fday">

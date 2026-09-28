@@ -244,3 +244,21 @@ legend { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
 .rvc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; }
 .rvc > div { background: var(--surface-2); border-radius: 12px; padding: 10px; display: grid; }
 .rvc b { font-size: 26px; }
+
+/* Environment Canada data vs app estimates */
+.hero-note { margin: 6px 0 0; font-size: 12px; opacity: .85; }
+.sec { margin: 6px 2px -4px; }
+.sec h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--aq-low); }
+.sec.est h3 { color: var(--lv3); }
+.sec p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.badge { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; border-radius: 6px; padding: 2px 6px; vertical-align: middle; }
+.badge.data { background: color-mix(in srgb, var(--aq-low) 15%, transparent); color: var(--aq-low); }
+.badge.est { border: 1px dashed var(--lv3); color: var(--lv3); }
+.tile-h .badge { margin-left: 6px; margin-right: auto; }
+.data-card { border-left: 4px solid var(--aq-low); }
+.est-card { border-left: 4px dashed var(--lv3); }
+.aq-row { display: flex; align-items: center; gap: 12px; }
+.aq-row .big { margin: 0; }
+.cmp-story { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; }
+.cmp-sec { padding: 8px 0 2px; font-size: 12px; border-top: 2px solid var(--line); }
+.cmp-sec.data b { color: var(--aq-low); } .cmp-sec.est b { color: var(--lv3); }
