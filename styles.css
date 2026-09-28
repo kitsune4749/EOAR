@@ -231,3 +231,16 @@ legend { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
 .pop-grid { display: grid; grid-template-columns: auto auto; gap: 4px 10px; align-items: center; justify-items: start; }
 .pop .btn { padding: 8px; }
 .leaflet-container .pop .muted { color: #5b6b63; }
+
+/* Countryside vs city */
+.cmp-table { display: grid; gap: 0; font-size: 14px; }
+.cmp-h, .cmp-row { display: grid; grid-template-columns: minmax(0, 1.5fr) 1fr 1fr minmax(0, 1.1fr); gap: 6px; align-items: center; padding: 6px 0; }
+.cmp-h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; padding-top: 0; }
+.cmp-row { border-top: 1px solid var(--line); }
+.cmp-row small { color: var(--muted); font-size: 10px; }
+.cmp-row.measured:first-of-type, .cmp-row.allergen + .cmp-row.measured { border-top: 2px solid var(--line); }
+.cmp { font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp.up { color: var(--lv3); } .cmp.dn { color: var(--aq-low); } .cmp.eq { color: var(--muted); font-weight: 500; }
+.rvc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; }
+.rvc > div { background: var(--surface-2); border-radius: 12px; padding: 10px; display: grid; }
+.rvc b { font-size: 26px; }

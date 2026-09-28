@@ -1,6 +1,6 @@
 // App settings you can change without touching the rest of the code.
 export const CONFIG = {
-  VERSION: '4.2',
+  VERSION: '4.3',
 
   // Optional: measured pollen from Google's Pollen API instead of the
   // built-in seasonal estimate. Leave blank to use the estimate.

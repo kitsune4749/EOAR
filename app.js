@@ -3,7 +3,7 @@ import { COMMUNITIES, REGIONS, HOME_AREAS, byId, nearestCommunity, LAND_LABELS, 
 import { getLocalNow, getLocalForecast } from './eccc-model.js';
 import { getWeather, getAirModel, getOfficialAqhi, nearestStation, getGooglePollen, pruneCache } from './api.js';
 import {
-  estimatePollen, estimateMold, aqhiFromConcentrations, aqhiRisk, aqhiText,
+  estimatePollen, estimateMold, estimateFarm, aqhiFromConcentrations, aqhiRisk, aqhiText,
   outlook, levelName, levelShort, levelClass, POLLEN_NAMES,
 } from './models.js';
 
@@ -75,7 +75,7 @@ function migrateOld() {
 }
 
 // ---------------- state ----------------
-const state = { current: null, loading: false, region: null, regionLoading: false, stations: null, local: null, map: null, mapView: null };
+const state = { current: null, compare: null, loading: false, region: null, regionLoading: false, stations: null, local: null, map: null, mapView: null };
 
 // Environment Canada's 10 km analysis/forecast, shared by all communities.
 async function loadLocal(force) {
@@ -114,6 +114,7 @@ function buildDays(w, c) {
     };
     day.pollen = estimatePollen(day, { killingFrostBefore: frost, land: c.land, lat: c.lat, profile: c.profile });
     day.mold = estimateMold(day, { land: c.land, profile: c.profile });
+    day.farm = estimateFarm(day, { land: c.land, profile: c.profile });
     if (Number(date.slice(5, 7)) >= 8 && day.tmin != null && day.tmin <= -2) frost = true;
     days.push(day);
   }
@@ -133,7 +134,7 @@ function assemble(community, weatherR, airR, stations, gPollen, local) {
   const id = community.id;
   const localNow = local?.now?.aqhi?.[id];
   const p = local?.now?.pollutants;
-  const pollutants = p && p.pm[id] != null ? { pm: p.pm[id], o3: p.o3[id], no2: p.no2[id] } : null;
+  const pollutants = p && p.pm[id] != null ? { pm: p.pm[id], o3: p.o3[id], no2: p.no2[id], pm10: p.pm10?.[id] ?? null } : null;
   let aqNow = null;
   if (station && station.aqhi != null && fresh && station.km <= 15) aqNow = { value: station.aqhi, source: 'official', station, pollutants };
   else if (localNow != null) aqNow = { value: localNow, source: 'local', station: fresh ? station : null, pollutants };
@@ -156,34 +157,40 @@ function assemble(community, weatherR, airR, stations, gPollen, local) {
     else if (loc != null) { day.aqhi = loc; day.aqhiSource = 'local'; }
     else if (off != null) { day.aqhi = off; day.aqhiSource = 'official'; }
     else { day.aqhi = aq.dailyMax[day.date] ?? null; day.aqhiSource = day.aqhi != null ? 'model' : null; }
-    day.outlook = outlook(day.pollen.max, day.mold, day.aqhi);
+    day.outlook = outlook(day.pollen.max, day.mold, day.aqhi, day.farm.level);
   }
-  if (days[0] && aqNow) days[0].outlook = outlook(days[0].pollen.max, days[0].mold, Math.max(aqNow.value, days[0].aqhi ?? 0));
+  if (days[0] && aqNow) days[0].outlook = outlook(days[0].pollen.max, days[0].mold, Math.max(aqNow.value, days[0].aqhi ?? 0), days[0].farm.level);
 
   const fetchedAt = Math.min(...[weatherR?.fetchedAt, airR?.fetchedAt].filter(Boolean));
   const stale = !!(weatherR?.stale || airR?.stale);
   return { community, current: w?.current, days, allDays, aqNow, station, fetchedAt, stale };
 }
 
+// Rural and small-town areas are compared with downtown Ottawa on the Today screen.
+const CITY_COMPARE = 'ottawa';
+const wantsCompare = (c) => !c.far && c.id !== CITY_COMPARE && c.land !== 'urban';
+
 async function refresh(force = false) {
   const community = byId(settings.communityId);
+  const places = wantsCompare(community) ? [community, byId(CITY_COMPARE)] : [community];
   state.loading = true; render(true);
   const [weatherR, airR, offR, gR, locR] = await Promise.allSettled([
-    getWeather([community], { force }),
-    getAirModel([community], { force }),
+    getWeather(places, { force }),
+    getAirModel(places, { force }),
     getOfficialAqhi({ force }),
     getGooglePollen(community, { force }),
     loadLocal(force),
   ]);
   if (offR.status === 'fulfilled') state.stations = offR.value.stations;
+  const part = (r, i) => (r.status === 'fulfilled' && r.value.data[i] ? { ...r.value, data: [r.value.data[i]] } : null);
   if (weatherR.status === 'rejected' && airR.status === 'rejected') {
     state.current = { community, error: true };
+    state.compare = null;
   } else {
-    state.current = assemble(community,
-      weatherR.status === 'fulfilled' ? weatherR.value : null,
-      airR.status === 'fulfilled' ? airR.value : null,
+    state.current = assemble(community, part(weatherR, 0), part(airR, 0),
       state.stations, gR.status === 'fulfilled' ? gR.value : null, state.local);
     state.current.officialOk = offR.status === 'fulfilled' || !!state.local?.now;
+    state.compare = places[1] && part(weatherR, 1) ? assemble(places[1], part(weatherR, 1), part(airR, 1), state.stations, null, state.local) : null;
   }
   state.loading = false; render(true);
 }
@@ -222,6 +229,7 @@ function summarySentence(day, aqNow) {
   if (p.max >= 1.5) parts.push(`${POLLEN_NAMES[p.main].toLowerCase()} pollen is ${levelName(p.max).toLowerCase()}`);
   else parts.push('pollen is low');
   if (day.mold >= 1.5) parts.push(`mould spores are ${levelName(day.mold).toLowerCase()}`);
+  if (day.farm?.level >= 1.5) parts.push(`farm dust is ${levelName(day.farm.level).toLowerCase()} (${day.farm.stage.name.toLowerCase()})`);
   const a = aqNow?.value ?? day.aqhi;
   if (a != null && a >= 4) parts.push(`air quality is ${aqhiRisk(a).label.toLowerCase()}`);
   let s = parts.join(', ');
@@ -235,10 +243,67 @@ function tips(day, aqNow) {
   if (day.pollen.max >= 2.5) t.push('Keep windows closed and run A/C or an air purifier if you have one.', 'Shower and change clothes after time outdoors.');
   if (day.pollen.main === 'weed' && day.pollen.max >= 1.5) t.push('Ragweed peaks in the morning; plan outdoor time for later in the day.');
   if (day.mold >= 2.5) t.push('Avoid raking or handling leaves, compost and mulch, or wear a mask.', 'Mould spores rise after rain and on humid evenings.');
+  if (day.farm?.level >= 2.5) t.push('Keep windows closed when combines, balers or manure spreaders are working nearby.', 'Wear an N95 mask for yard or field work, and keep your rescue inhaler handy.');
   if (a != null && a >= 7) t.push('Air quality is poor: reduce strenuous outdoor activity, especially with asthma.');
   else if (a != null && a >= 4) t.push('If you have asthma or heart or lung conditions, consider easing off hard outdoor exercise.');
   if (!t.length) t.push('A good day to be outside. Conditions are low for most allergy sufferers.');
-  return t.slice(0, 4);
+  return t.slice(0, 5);
+}
+
+function farmCard(s, day) {
+  const f = day.farm;
+  if (!f || s.community.far) return '';
+  return `<section class="card">
+      <div class="tile-h">Farm activity <button class="info" data-info="farm" aria-label="About farm activity">?</button></div>
+      <div class="prow"><span><b>${esc(f.stage.name)}</b></span>${levelPill(f.level)}</div>${bar(f.level)}
+      <p class="small" style="margin:0">${esc(f.stage.what)}${f.notes.length ? ' ' + esc(f.notes.join(' ')) : ''}</p>
+      <div class="src">Estimate from the Eastern Ontario farm calendar, today’s weather and ${LAND_LABELS[s.community.land]}. Not part of the official AQHI.</div>
+    </section>`;
+}
+
+// Countryside vs downtown Ottawa, side by side. Measured pollutants come from Environment
+// Canada; pollen, mould and farm activity are the app's estimates.
+function compareCard(s, c) {
+  const a = s?.days?.[0], b = c?.days?.[0];
+  if (!a || !b) return '';
+  const here = s.community.name, city = 'Ottawa';
+  const pa = s.aqNow?.pollutants, pb = c.aqNow?.pollutants;
+  const coarse = (p) => (p?.pm10 != null && p?.pm != null ? Math.max(0, p.pm10 - p.pm) : null);
+  const rows = [
+    { label: 'Pollen', a: a.pollen.max, b: b.pollen.max, kind: 'level', group: 'allergen' },
+    { label: 'Mould spores', a: a.mold, b: b.mold, kind: 'level', group: 'allergen' },
+    { label: 'Farm dust & ammonia', a: a.farm.level, b: b.farm.level, kind: 'level', group: 'allergen' },
+    { label: 'Coarse dust', a: coarse(pa), b: coarse(pb), kind: 'num', unit: 'µg/m³', group: 'measured' },
+    { label: 'Fine particles', a: pa?.pm, b: pb?.pm, kind: 'num', unit: 'µg/m³', group: 'measured' },
+    { label: 'Ozone', a: pa?.o3, b: pb?.o3, kind: 'num', unit: 'ppb', group: 'measured', digits: 0 },
+    { label: 'Traffic NO₂', a: pa?.no2, b: pb?.no2, kind: 'num', unit: 'ppb', group: 'measured' },
+    { label: 'AQHI', a: s.aqNow?.value, b: c.aqNow?.value, kind: 'aqhi', group: 'measured' },
+  ].filter((r) => r.a != null && r.b != null);
+  const cell = (r, v) => r.kind === 'level' ? shortPill(v) : r.kind === 'aqhi' ? aqPill(v) : `<b>${v.toFixed(r.digits ?? 1)}</b>`;
+  const diff = (r) => {
+    // Levels and AQHI compare as displayed; measurements need a real (>10%) difference.
+    if (r.kind !== 'num') { const d = Math.round(r.a) - Math.round(r.b); return d > 0 ? 'here' : d < 0 ? 'city' : 'same'; }
+    const d = r.a - r.b, thr = Math.max(0.3, 0.1 * Math.max(r.a, r.b));
+    return d > thr ? 'here' : d < -thr ? 'city' : 'same';
+  };
+  const marks = { here: `<span class="cmp up" title="Higher in ${esc(here)}">▲ ${esc(here)}</span>`, city: `<span class="cmp dn" title="Higher in Ottawa">▲ ${city}</span>`, same: '<span class="cmp eq">≈ same</span>' };
+  const lc = (s) => s.replace(/\b[A-Z][a-z]+/g, (w) => w.toLowerCase()); // keep AQHI, NO₂
+  const higherHere = rows.filter((r) => diff(r) === 'here').map((r) => lc(r.label));
+  const higherCity = rows.filter((r) => diff(r) === 'city').map((r) => lc(r.label.replace('Traffic ', 'traffic ')));
+  const list = (x) => x.length < 2 ? x.join('') : `${x.slice(0, -1).join(', ')} and ${x[x.length - 1]}`;
+  let story = '';
+  if (higherHere.length) story += `Higher in ${esc(here)} today: <b>${esc(list(higherHere))}</b>. `;
+  if (higherCity.length) story += `Higher downtown: <b>${esc(list(higherCity))}</b>.`;
+  if (!story) story = 'Conditions are about the same in both places today.';
+  return `<section class="card">
+      <div class="tile-h">${esc(here)} vs downtown Ottawa <button class="info" data-info="compare" aria-label="About this comparison">?</button></div>
+      <p class="small" style="margin:0 0 8px">${story}</p>
+      <div class="cmp-table">
+        <div class="cmp-h"><span></span><span>${esc(here)}</span><span>Ottawa</span><span></span></div>
+        ${rows.map((r) => `<div class="cmp-row ${r.group}"><span>${r.label}${r.unit ? ` <small>${r.unit}</small>` : ''}</span><span>${cell(r, r.a)}</span><span>${cell(r, r.b)}</span>${marks[diff(r)]}</div>`).join('')}
+      </div>
+      <div class="src">Pollen, mould and farm dust: the app’s estimates. Dust, particles, ozone, NO₂ and AQHI: Environment Canada’s local air quality analysis.</div>
+    </section>`;
 }
 
 function renderHeader() {
@@ -295,7 +360,7 @@ function renderToday() {
         <div class="tile-h">Air quality <button class="info" data-info="aqhi" aria-label="About AQHI">?</button></div>
         <div class="big ${aqRisk.cls}-text">${aqhiText(aq?.value)}</div>
         <div class="tile-sub"><span class="pill ${aqRisk.cls}">${aqRisk.label}</span></div>
-        ${pol ? `<div class="pollutants"><span>Fine particles <b>${pol.pm.toFixed(1)}</b> µg/m³</span><span>Ozone <b>${Math.round(pol.o3)}</b> ppb</span><span>NO₂ <b>${pol.no2.toFixed(1)}</b> ppb</span></div>` : ''}
+        ${pol ? `<div class="pollutants"><span>Fine particles <b>${pol.pm.toFixed(1)}</b> µg/m³</span><span>Ozone <b>${Math.round(pol.o3)}</b> ppb</span><span>NO₂ <b>${pol.no2.toFixed(1)}</b> ppb</span>${pol.pm10 != null ? `<span>Coarse dust <b>${Math.max(0, pol.pm10 - pol.pm).toFixed(1)}</b> µg/m³</span>` : ''}</div>` : ''}
         <div class="src">AQHI · ${aqSrc}</div>
       </section>
       <section class="card tile">
@@ -312,6 +377,9 @@ function renderToday() {
         <div class="prow"><span>${POLLEN_NAMES[k]}</span>${levelPill(day.pollen[k])}</div>${bar(day.pollen[k])}`).join('')}
       <div class="src">${pSrc}</div>
     </section>
+
+    ${farmCard(s, day)}
+    ${compareCard(s, state.compare)}
 
     <section class="card weather">
       <div class="wx-main"><span class="wx-ico">${wx(cur.weather_code ?? day.code)[1]}</span>
@@ -419,6 +487,7 @@ const METRICS = {
   outlook: { label: 'Overall', value: (r) => r.days[0].outlook },
   pollen: { label: 'Pollen', value: (r) => r.days[0].pollen.max },
   mold: { label: 'Mould', value: (r) => r.days[0].mold },
+  farm: { label: 'Farm', value: (r) => r.days[0].farm?.level ?? 0 },
   aqhi: { label: 'AQHI', value: (r) => r.aqNow?.value ?? r.days[0].aqhi, aq: true },
 };
 let leafletLoading = null;
@@ -535,6 +604,19 @@ function journalInsights(entries) {
       insight = `<p>On <b>high-outlook days</b> your symptoms average <b>${avg(hi).toFixed(1)}/10</b>, versus <b>${avg(lo).toFixed(1)}/10</b> on low days.</p>`;
     }
   }
+  // Countryside vs city, using where each entry was logged.
+  const rural = (e) => ['farm', 'mixed', 'forest'].includes(byId(e.communityId)?.land);
+  const sev = entries.filter((e) => e.severity != null);
+  const ru = sev.filter(rural), ci = sev.filter((e) => !rural(e));
+  const mean = (x) => x.reduce((s, e) => s + e.severity, 0) / x.length;
+  if (ru.length >= 2 && ci.length >= 2) {
+    const d = mean(ru) - mean(ci);
+    insight += `<div class="rvc"><div><span class="muted small">Countryside days</span><b>${mean(ru).toFixed(1)}</b><span class="muted small">${ru.length} entries</span></div>
+      <div><span class="muted small">City &amp; town days</span><b>${mean(ci).toFixed(1)}</b><span class="muted small">${ci.length} entries</span></div></div>
+      <p class="small">${Math.abs(d) < 0.5 ? 'So far your symptoms are about the same in both.' : d > 0 ? `Your symptoms average <b>${d.toFixed(1)} points higher</b> in the countryside.` : `Your symptoms average <b>${(-d).toFixed(1)} points higher</b> in the city.`} The more entries from both, the stronger the evidence.</p>`;
+  } else if (sev.length >= 2) {
+    insight += `<p class="muted small">Log entries both at home and when you’re in the city (pick the community you were in). Once you have at least 2 of each, you’ll see how your symptoms compare between the countryside and the city.</p>`;
+  }
   if (!chart && !insight) return '';
   return `<section class="card"><div class="tile-h">Your pattern</div>${chart}${insight || '<p class="muted small">After a few more entries on different kinds of days, you’ll see how conditions line up with your symptoms.</p>'}</section>`;
 }
@@ -627,6 +709,8 @@ function errorCard(which) {
 const INFO = {
   aqhi: ['Air Quality Health Index', 'Canada’s 1–10+ scale for health risk from air pollution (ozone, fine particles such as wildfire smoke, and nitrogen dioxide). 1–3 low, 4–6 moderate, 7–10 high, above 10 very high. Poor air quality can make allergy and asthma symptoms worse. For most communities the value comes from Environment Canada’s local air quality analysis, a 10 km grid that blends station measurements with its air quality model, so each town gets its own reading.'],
   pollen: ['Pollen', 'Tree pollen runs from late March to early June, grass from late May to early August, and ragweed from early August until the first hard frost. Rain clears pollen from the air; warm, dry, windy days raise it. This is an estimate, not a pollen count.'],
+  farm: ['Farm activity', 'Field work puts things in the air that the official AQHI doesn’t measure: soil dust from tilling, grain dust and fungal spores from combining, hay dust and pollen from haying, and ammonia from manure spreading. These are well-known asthma and allergy triggers for people living near farmland. The level shown is an estimate based on the typical Eastern Ontario farm calendar and today’s weather: dry, windy days raise it, and rain lowers it. It is not a measurement.'],
+  compare: ['Countryside vs city', 'The official AQHI only counts ozone, fine particles and nitrogen dioxide, which are mostly traffic and smoke pollution. By that measure rural air is often cleaner than downtown. But many of the things that trigger rural asthma and allergies (pollen from fields and ditches, mould spores and grain dust from harvest, soil dust and ammonia) aren’t in the AQHI, and there are no monitoring stations on farmland to catch short dust episodes. This card shows both sides. Log your symptoms in the Journal, both at home and in the city, to build your own evidence.'],
   mold: ['Mould spores', 'Outdoor mould spores (e.g. Alternaria, Cladosporium) rise with warmth, humidity and rain, and peak in late summer and fall when leaves decay. Snow cover suppresses them. This is an estimate, not a spore count.'],
 };
 
@@ -655,7 +739,7 @@ function setCommunity(id) {
   id = byId(id)?.id;
   if (!id || id === settings.communityId) { if (settings.view === 'region') go('today'); return; }
   settings.communityId = id; saveSettings();
-  state.current = null;
+  state.current = null; state.compare = null;
   if (settings.view === 'region') settings.view = 'today';
   render(); refresh();
 }
@@ -727,12 +811,12 @@ document.addEventListener('click', async (ev) => {
       return download(`eoar-backup-${todayStr()}.json`, JSON.stringify(data, null, 2), 'application/json');
     }
     case 'exportCsv': {
-      const rows = [['Date', 'Community', 'Severity (0-10)', 'Symptoms', 'Medication', 'Notes', 'Outlook', 'Tree', 'Grass', 'Weed', 'Mould', 'AQHI']];
+      const rows = [['Date', 'Community', 'Severity (0-10)', 'Symptoms', 'Medication', 'Notes', 'Outlook', 'Tree', 'Grass', 'Weed', 'Mould', 'Farm activity', 'AQHI', 'Area type']];
       for (const e of load(KEYS.journal, [])) {
         const s = e.snapshot || {};
         rows.push([e.date, byId(e.communityId)?.name || '', e.severity ?? '', (e.symptoms || []).join('; '), e.meds || '', e.notes || '',
           s.outlook != null ? levelName(s.outlook) : '', s.tree != null ? levelName(s.tree) : '', s.grass != null ? levelName(s.grass) : '', s.weed != null ? levelName(s.weed) : '',
-          s.mold != null ? levelName(s.mold) : '', s.aqhi ?? '']);
+          s.mold != null ? levelName(s.mold) : '', s.farm != null ? levelName(s.farm) : '', s.aqhi ?? '', LAND_LABELS[byId(e.communityId)?.land] || '']);
       }
       const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
       return download(`eoar-journal-${todayStr()}.csv`, '﻿' + csv, 'text/csv');
@@ -774,7 +858,7 @@ document.addEventListener('submit', (ev) => {
     const s = state.current;
     const day = s?.community?.id === entry.communityId ? s.allDays?.find((d) => d.date === entry.date) : null;
     if (day) {
-      entry.snapshot = { outlook: day.outlook, pollen: day.pollen.max, main: day.pollen.main, tree: day.pollen.tree, grass: day.pollen.grass, weed: day.pollen.weed, mold: day.mold,
+      entry.snapshot = { outlook: day.outlook, farm: day.farm?.level, land: byId(entry.communityId)?.land, pollen: day.pollen.max, main: day.pollen.main, tree: day.pollen.tree, grass: day.pollen.grass, weed: day.pollen.weed, mold: day.mold,
         aqhi: entry.date === todayStr() ? (s.aqNow?.value ?? day.aqhi) : day.aqhi };
     }
     const all = load(KEYS.journal, []); all.push(entry);

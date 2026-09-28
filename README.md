@@ -1,4 +1,4 @@
-# EOAR · Eastern Ontario Air & Allergy (v4.2)
+# EOAR · Eastern Ontario Air & Allergy (v4.3)
 
 A free web app showing the daily allergy outlook for Eastern Ontario, roughly Pembroke to Hawkesbury and Kingston to Cornwall, grouped into 20 areas (nearby small towns share the same data), plus Toronto, Montréal, Halifax, Calgary and Vancouver. It includes:
 
@@ -32,6 +32,8 @@ To update later, upload changed files to the same repo. Phones pick up the new v
 | Weather | Open-Meteo | Free for non-commercial use |
 | Pollen | Built-in seasonal estimate, adjusted daily for weather, latitude and surrounding land (farm, suburban, urban, forest) | Optional: Google Pollen API (see `config.js`) |
 | Mould | Built-in estimate (season, temperature, humidity, rain, snow, leaf litter) | No public mould counts exist for the region |
+| Farm activity | Built-in estimate from the Eastern Ontario farm calendar (manure spreading, tillage, haying, harvest) and weather | Not part of the AQHI; shown with a countryside-vs-Ottawa comparison |
+| Coarse dust | ECCC RDAQA PM10 minus PM2.5 | Shown on Today and in the comparison |
 
 Journal and shot records never leave the phone. Use **More → Download backup** now and then.
 

@@ -151,8 +151,10 @@ export function aqhiRisk(v) {
 export const aqhiText = (v) => (v == null ? '–' : v > 10 ? '10+' : String(v));
 
 // Overall allergy outlook on the same 0–4 scale.
-export function outlook(pollenMax, mold, aqhi) {
-  let s = Math.max(pollenMax, mold);
+export function outlook(pollenMax, mold, aqhi, farm = 0) {
+  // Farm dust and ammonia are asthma triggers, weighted a little below pollen/mould
+  // because they're the least certain estimate.
+  let s = Math.max(pollenMax, mold, farm * 0.85);
   if (aqhi != null) {
     if (aqhi >= 7) s = Math.max(s, 3);
     else if (aqhi >= 4) s = Math.min(4, s + 0.5);
@@ -161,3 +163,35 @@ export function outlook(pollenMax, mold, aqhi) {
 }
 
 export const POLLEN_NAMES = { tree: 'Tree', grass: 'Grass', weed: 'Weed / ragweed' };
+
+// ---------------- Farm activity (Eastern Ontario farm calendar) ----------------
+// What field work is typically happening, and what it puts in the air. None of this is
+// in the official AQHI, which only counts ozone, fine particles and nitrogen dioxide.
+export const FARM_STAGES = [
+  { to: 74,  base: 0.2, name: 'Winter', what: 'Fields are frozen or snow-covered, with little farm activity.' },
+  { to: 115, base: 1.8, name: 'Spring thaw & manure spreading', what: 'Manure spreading releases ammonia and odours, and thawing fields start to dry and blow.' },
+  { to: 151, base: 2.4, name: 'Tillage & planting', what: 'Working dry fields raises soil dust, especially on windy days.' },
+  { to: 181, base: 2.6, name: 'First-cut hay', what: 'Cutting and baling hay stirs up grass pollen and mould spores.' },
+  { to: 212, base: 2.4, name: 'Hay & winter wheat harvest', what: 'Second-cut hay and the wheat harvest add grain dust and spores.' },
+  { to: 257, base: 2.0, name: 'Late-summer haying', what: 'More hay cutting and field work, and ragweed thrives along field edges and ditches.' },
+  { to: 314, base: 3.3, name: 'Soybean & corn harvest', what: 'Combines release grain dust and fungal spores; fall tillage and manure spreading follow.' },
+  { to: 334, base: 1.8, name: 'Late harvest & fall manure', what: 'The last corn comes off and manure is spread before freeze-up.' },
+  { to: 366, base: 0.2, name: 'Winter', what: 'Fields are frozen or snow-covered, with little farm activity.' },
+];
+const FARM_LAND = { farm: 1, mixed: 0.7, suburban: 0.3, urban: 0.12, forest: 0.2 };
+
+/** day: { date, tmax, precip, windMax, snowDepth }; ctx: { land, profile } */
+export function estimateFarm(day, ctx = {}) {
+  const doy = dayOfYear(day.date);
+  const stage = FARM_STAGES.find((s) => doy <= s.to);
+  let v = stage.base;
+  const notes = [];
+  if (day.snowDepth > 0.02) { v *= 0.2; }
+  else if (day.precip >= 3) { v *= 0.45; notes.push('Rain is keeping dust down and fieldwork paused.'); }
+  else if (day.precip >= 1) { v *= 0.75; }
+  else if (day.windMax >= 20) { v *= 1.25; notes.push('Dry and windy: field dust travels farther today.'); }
+  if (day.tmax != null && day.tmax < 0) v *= 0.5;
+  // Other provinces' farm calendars differ; only Eastern Ontario is modelled.
+  const landF = ctx.profile ? 0.12 : (FARM_LAND[ctx.land] ?? 0.3);
+  return { level: clamp(v * landF), stage, notes, modelled: !ctx.profile };
+}

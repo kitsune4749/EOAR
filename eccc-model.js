@@ -15,7 +15,7 @@ const BBOX = 'subset=lat(43.8,46.4)&subset=lon(-78.3,-74.1)'; // Eastern Ontario
 const EXTRA_NOW_BOXES = ['subset=lat(45.2,45.8)&subset=lon(-74.0,-73.2)'];
 const TZ = 'America/Toronto';
 const PREFIX = 'eoar4_cache:grid2:'; // v2: sampled at areas
-const ANALYSIS = { pm25: 'RDAQA-FW_10km_PM2.5', o3: 'RDAQA_10km_O3', no2: 'RDAQA_10km_NO2' };
+const ANALYSIS = { pm25: 'RDAQA-FW_10km_PM2.5', o3: 'RDAQA_10km_O3', no2: 'RDAQA_10km_NO2', pm10: 'RDAQA-FW_10km_PM10' };
 const FORECAST = { pm25: 'RAQDPS.SFC_PM2.5', o3: 'RAQDPS.SFC_O3', no2: 'RAQDPS.SFC_NO2' };
 const LOCAL_HOURS = [8, 11, 14, 17, 20]; // forecast sample times (local), covers morning, afternoon ozone peak and evening
 
@@ -110,7 +110,7 @@ export async function getLocalNow({ force } = {}) {
   const times = [0, 1, 2].map((h) => iso(latest - h * 3600e3)).filter((t) => Date.parse(t) >= Date.parse(caps.start));
   const jobs = [];
   for (const box of [BBOX, ...EXTRA_NOW_BOXES]) {
-    for (const t of times) for (const k of ['pm25', 'o3', 'no2']) jobs.push(() => grid(ANALYSIS[k], t, null, force, box).then((g) => ({ t, k, g })));
+    for (const t of times) for (const k of ['pm25', 'o3', 'no2', 'pm10']) jobs.push(() => grid(ANALYSIS[k], t, null, force, box).then((g) => ({ t, k, g })));
   }
   const res = (await pool(jobs)).filter(Boolean);
   if (!res.length) throw new Error('analysis unavailable');
@@ -119,8 +119,8 @@ export async function getLocalNow({ force } = {}) {
     for (const c of COMMUNITIES) { const v = gs.map((g) => g[c.id]).filter((x) => x != null); out[c.id] = v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }
     return out;
   };
-  const pm = avg('pm25'), o3 = avg('o3'), no2 = avg('no2');
-  return { aqhi: aqhiAll(pm, o3, no2), pollutants: { pm, o3, no2 }, time: caps.def, fetchedAt: Date.now() };
+  const pm = avg('pm25'), o3 = avg('o3'), no2 = avg('no2'), pm10 = avg('pm10');
+  return { aqhi: aqhiAll(pm, o3, no2), pollutants: { pm, o3, no2, pm10 }, time: caps.def, fetchedAt: Date.now() };
 }
 
 /** Daily maximum AQHI for every community from the regional forecast (~3 days). */
