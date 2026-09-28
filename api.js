@@ -1,6 +1,6 @@
 // Data fetching with a small localStorage cache so the app works offline
 // and doesn't hammer the free APIs.
-import { distanceKm } from './communities.js';
+import { distanceKm, COMMUNITIES } from './communities.js';
 import { CONFIG } from './config.js';
 
 const TZ = 'America/Toronto';
@@ -56,7 +56,7 @@ export async function getWeather(places, { force, pastDays = 40, forecastDays = 
     forecast_hours: '1',
     past_days: String(pastDays),
     forecast_days: String(forecastDays),
-    timezone: TZ,
+    timezone: places.map((p) => p.tz || TZ).join(','),
   });
   const r = await cachedJson(`https://api.open-meteo.com/v1/forecast?${q}`, { force });
   return { ...r, data: asList(r.data) };
@@ -70,7 +70,7 @@ export async function getAirModel(places, { force, forecastDays = 5 } = {}) {
     hourly: 'pm2_5,nitrogen_dioxide,ozone',
     past_days: '1',
     forecast_days: String(forecastDays),
-    timezone: TZ,
+    timezone: places.map((p) => p.tz || TZ).join(','),
   });
   const r = await cachedJson(`https://air-quality-api.open-meteo.com/v1/air-quality?${q}`, { force });
   return { ...r, data: asList(r.data) };
@@ -78,7 +78,11 @@ export async function getAirModel(places, { force, forecastDays = 5 } = {}) {
 
 // ---------- Official AQHI (Environment and Climate Change Canada) ----------
 const ECCC = 'https://api.weather.gc.ca/collections';
-const BBOX = '-78.3,43.8,-74.1,46.4'; // Eastern Ontario + margin
+// Eastern Ontario + margin, plus a small box around each major city elsewhere.
+const AREAS = [
+  { bbox: '-78.3,43.8,-74.1,46.4', tz: TZ },
+  ...COMMUNITIES.filter((c) => c.far).map((c) => ({ bbox: `${c.lon - 0.5},${c.lat - 0.4},${c.lon + 0.5},${c.lat + 0.4}`, tz: c.tz })),
+];
 
 const pick = (o, ...keys) => { for (const k of keys) if (o?.[k] != null) return o[k]; return undefined; };
 
@@ -97,8 +101,15 @@ function stationFrom(f) {
 }
 
 export async function getOfficialAqhi({ force } = {}) {
-  const obsUrl = `${ECCC}/aqhi-observations-realtime/items?f=json&lang=en&bbox=${BBOX}&sortby=-observation_datetime&limit=200`;
-  const fcUrl = `${ECCC}/aqhi-forecasts-realtime/items?f=json&lang=en&bbox=${BBOX}&sortby=-publication_datetime&limit=1500`;
+  const results = await Promise.all(AREAS.map((a) => fetchStations(a, force).catch(() => null)));
+  const ok = results.filter(Boolean);
+  if (!ok.length) throw new Error('ECCC AQHI unavailable');
+  return { stations: ok.flatMap((r) => r.stations), fetchedAt: Math.min(...ok.map((r) => r.fetchedAt)) };
+}
+
+async function fetchStations({ bbox, tz }, force) {
+  const obsUrl = `${ECCC}/aqhi-observations-realtime/items?f=json&lang=en&bbox=${bbox}&sortby=-observation_datetime&limit=200`;
+  const fcUrl = `${ECCC}/aqhi-forecasts-realtime/items?f=json&lang=en&bbox=${bbox}&sortby=-publication_datetime&limit=1500`;
   const [obsR, fcR] = await Promise.allSettled([cachedJson(obsUrl, { force }), cachedJson(fcUrl, { force })]);
 
   const stations = new Map();
@@ -124,7 +135,7 @@ export async function getOfficialAqhi({ force } = {}) {
       if (s.aqhi == null || (p.publication_datetime || '') !== latestPub.get(s.id)) continue;
       const when = p.forecast_datetime ? new Date(p.forecast_datetime) : null;
       if (!when || Number.isNaN(+when)) continue;
-      const date = when.toLocaleDateString('en-CA', { timeZone: TZ });
+      const date = when.toLocaleDateString('en-CA', { timeZone: tz });
       if (!stations.has(s.id)) stations.set(s.id, { ...s, aqhi: null, obsTime: null, forecast: {}, forecastOnly: true });
       const st = stations.get(s.id);
       st.forecast[date] = Math.max(st.forecast[date] ?? 0, s.aqhi);

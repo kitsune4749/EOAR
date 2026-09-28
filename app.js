@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { COMMUNITIES, REGIONS, byId, nearestCommunity, LAND_LABELS } from './communities.js';
+import { COMMUNITIES, REGIONS, HOME_AREAS, byId, nearestCommunity, LAND_LABELS, coversText } from './communities.js';
 import { getLocalNow, getLocalForecast } from './eccc-model.js';
 import { getWeather, getAirModel, getOfficialAqhi, nearestStation, getGooglePollen, pruneCache } from './api.js';
 import {
@@ -11,17 +11,18 @@ import {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TZ = 'America/Toronto';
-const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
-const nowHourStr = () => {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+// The person's own time zone for journal dates; each area has its own for forecasts.
+const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Toronto'; } catch { return 'America/Toronto'; } })();
+const todayStr = (tz = TZ) => new Date().toLocaleDateString('en-CA', { timeZone: tz });
+const nowHourStr = (tz = TZ) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
     .formatToParts(new Date()).map((x) => [x.type, x.value]));
   return `${p.year}-${p.month}-${p.day}T${p.hour}:00`;
 };
-const dayLabel = (date, i) => {
-  if (date === todayStr()) return 'Today';
+const dayLabel = (date, tz = TZ) => {
+  if (date === todayStr(tz)) return 'Today';
   const d = new Date(date + 'T12:00:00');
-  const tomorrow = new Date(todayStr() + 'T12:00:00'); tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrow = new Date(todayStr(tz) + 'T12:00:00'); tomorrow.setDate(tomorrow.getDate() + 1);
   if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
   return d.toLocaleDateString('en-CA', { weekday: 'long' });
 };
@@ -58,7 +59,9 @@ const settings = Object.assign({
   shotIntervalDays: 7,
   view: 'today',
 }, load(KEYS.settings, {}));
-if (!byId(settings.communityId)) settings.communityId = CONFIG.DEFAULT_COMMUNITY;
+// Map any old town IDs (before towns were grouped into areas) to their area.
+settings.communityId = (byId(settings.communityId) || byId(CONFIG.DEFAULT_COMMUNITY)).id;
+settings.favourites = [...new Set((settings.favourites || []).map((f) => byId(f)?.id).filter(Boolean))];
 const saveSettings = () => save(KEYS.settings, settings);
 
 // Bring over entries from the earlier (Beta 3.0) version if they exist on this device.
@@ -66,13 +69,13 @@ function migrateOld() {
   if (localStorage.getItem(KEYS.journal) || localStorage.getItem(KEYS.shots)) return;
   const oldJ = load('eoar3_journal', []), oldS = load('eoar3_shots', []);
   if (!oldJ.length && !oldS.length) return;
-  const nameToId = (n) => (COMMUNITIES.find((c) => c.name === n || c.name.startsWith(n)) || {}).id || CONFIG.DEFAULT_COMMUNITY;
+  const nameToId = (n) => (COMMUNITIES.find((c) => c.name === n || c.name.startsWith(n) || c.covers.some((x) => x.name === n)) || {}).id || CONFIG.DEFAULT_COMMUNITY;
   save(KEYS.journal, oldJ.map((e) => ({ id: uid(), date: e.date, communityId: nameToId(e.community), severity: null, symptoms: [], meds: '', notes: e.notes || '' })));
   save(KEYS.shots, oldS.map((s) => ({ id: uid(), date: s.date || '', arm: '', vial: '', dose: '', reaction: s.reaction ?? '', notes: '' })));
 }
 
 // ---------------- state ----------------
-const state = { current: null, loading: false, region: null, regionLoading: false, stations: null, local: null };
+const state = { current: null, loading: false, region: null, regionLoading: false, stations: null, local: null, map: null, mapView: null };
 
 // Environment Canada's 10 km analysis/forecast, shared by all communities.
 async function loadLocal(force) {
@@ -97,7 +100,7 @@ function hourlyAqhi(air) {
 }
 
 function buildDays(w, c) {
-  const d = w.daily; const today = todayStr();
+  const d = w.daily;
   const snow = w.hourly?.snow_depth?.[0] ?? 0;
   const days = [];
   let frost = false;
@@ -109,8 +112,8 @@ function buildDays(w, c) {
       precip: d.precipitation_sum[i] ?? 0, pop: d.precipitation_probability_max?.[i],
       windMax: d.wind_speed_10m_max[i] ?? 0, rhMean: d.relative_humidity_2m_mean?.[i], rainPrev3, snowDepth: snow,
     };
-    day.pollen = estimatePollen(day, { killingFrostBefore: frost, land: c.land, lat: c.lat });
-    day.mold = estimateMold(day, { land: c.land });
+    day.pollen = estimatePollen(day, { killingFrostBefore: frost, land: c.land, lat: c.lat, profile: c.profile });
+    day.mold = estimateMold(day, { land: c.land, profile: c.profile });
     if (Number(date.slice(5, 7)) >= 8 && day.tmin != null && day.tmin <= -2) frost = true;
     days.push(day);
   }
@@ -135,10 +138,10 @@ function assemble(community, weatherR, airR, stations, gPollen, local) {
   if (station && station.aqhi != null && fresh && station.km <= 15) aqNow = { value: station.aqhi, source: 'official', station, pollutants };
   else if (localNow != null) aqNow = { value: localNow, source: 'local', station: fresh ? station : null, pollutants };
   else if (station && station.aqhi != null && fresh) aqNow = { value: station.aqhi, source: 'official', station };
-  else if (aq.byHour[nowHourStr()] != null) aqNow = { value: aq.byHour[nowHourStr()], source: 'model' };
+  else if (aq.byHour[nowHourStr(community.tz)] != null) aqNow = { value: aq.byHour[nowHourStr(community.tz)], source: 'model' };
 
   const allDays = w ? buildDays(w, community) : [];
-  const days = allDays.filter((d) => d.date >= todayStr());
+  const days = allDays.filter((d) => d.date >= todayStr(community.tz));
   for (const day of allDays) {
     if (gPollen?.[day.date]) {
       const g = gPollen[day.date];
@@ -243,8 +246,10 @@ function renderHeader() {
   const fav = settings.favourites.includes(c.id);
   const chips = settings.favourites.map(byId).filter(Boolean)
     .map((f) => `<button class="chip ${f.id === c.id ? 'on' : ''}" data-community="${f.id}">${esc(f.name.replace(' (Downtown)', ''))}</button>`).join('');
+  // Each area, followed by the nearby places it covers (picking one of those opens the area).
   const options = REGIONS.map((r) => `<optgroup label="${esc(r)}">${COMMUNITIES.filter((x) => x.region === r)
-    .map((x) => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</optgroup>`).join('');
+    .map((x) => `<option value="${x.id}" ${x.id === c.id ? 'selected' : ''}>${esc(x.name)}</option>` +
+      x.covers.map((p) => `<option value="${x.id}">&nbsp;&nbsp;↳ ${esc(p.name)} (${esc(x.name.replace(' (Downtown)', ''))} area)</option>`).join('')).join('')}</optgroup>`).join('');
   $('#topbar').innerHTML = `
     <div class="brand"><img src="icon-192.png" alt="" width="28" height="28"><span>EOAR</span><small>Eastern Ontario Air &amp; Allergy</small></div>
     <div class="place-row">
@@ -252,6 +257,7 @@ function renderHeader() {
       <button class="icon-btn ${fav ? 'starred' : ''}" id="favBtn" aria-label="${fav ? 'Remove from' : 'Add to'} favourites" title="Favourite">${fav ? '★' : '☆'}</button>
       <button class="icon-btn" id="locateBtn" aria-label="Use my location" title="Use my location">📍</button>
     </div>
+    ${c.covers.length ? `<div class="covers">Also covers ${esc(coversText(c))}</div>` : ''}
     <div class="chips">${chips}</div>`;
 }
 
@@ -338,7 +344,7 @@ function renderForecast() {
     ${s.days.map((d, i) => `
       <section class="card fday">
         <div class="fday-h">
-          <div><div class="fday-name">${dayLabel(d.date, i)}</div><div class="muted small">${shortDate(d.date)}</div></div>
+          <div><div class="fday-name">${dayLabel(d.date, s.community.tz)}</div><div class="muted small">${shortDate(d.date)}</div></div>
           <div class="fday-wx"><span>${wx(d.code)[1]}</span> ${Math.round(d.tmax)}° <span class="muted">/ ${Math.round(d.tmin)}°</span>${d.pop != null ? `<span class="muted small"> · ${d.pop}% rain</span>` : ''}</div>
           ${levelPill(d.outlook)}
         </div>
@@ -355,20 +361,40 @@ function renderForecast() {
 
 function renderRegion() {
   if (state.region === null && !state.regionLoading) { setTimeout(() => loadRegion(), 0); }
-  if (!Array.isArray(state.region) && state.region !== 'error') return `<h2 class="h">Across Eastern Ontario</h2>${skeleton()}`;
-  if (state.region === 'error') return `<h2 class="h">Across Eastern Ontario</h2>${errorCard('region')}`;
-  const sort = settings.regionSort || 'region';
+  if (!Array.isArray(state.region) && state.region !== 'error') return `<h2 class="h">Today across the region</h2>${skeleton()}`;
+  if (state.region === 'error') return `<h2 class="h">Today across the region</h2>${errorCard('region')}`;
+  const mode = settings.regionMode || 'list';
   const rows = [...state.region].filter((r) => r.days?.[0]);
+  const t = rows[0]?.fetchedAt;
+  const modeSeg = `<div class="seg" role="tablist">
+      ${[['list', '☰ List'], ['map', '🗺️ Map']].map(([k, l]) => `<button data-rmode="${k}" class="${mode === k ? 'on' : ''}">${l}</button>`).join('')}
+    </div>`;
+  const status = t ? `<div class="status">${state.regionLoading ? 'Updating…' : `Updated ${ago(t)}`}</div>` : '';
+
+  if (mode === 'map') {
+    const metric = settings.mapMetric || 'outlook';
+    return `<h2 class="h">Today across the region</h2>${modeSeg}
+      <div class="seg small-seg">${Object.entries(METRICS).map(([k, m]) => `<button data-metric="${k}" class="${metric === k ? 'on' : ''}">${m.label}</button>`).join('')}</div>
+      ${status}
+      <div class="map-zoom"><span class="muted small">Show:</span><button class="chip-btn" data-mapzoom="home">Eastern Ontario</button><button class="chip-btn" data-mapzoom="canada">All of Canada</button></div>
+      <div class="map-wrap card"><div id="map" role="region" aria-label="Map of areas"></div></div>
+      <div class="legend">${metric === 'aqhi'
+        ? [[2, 'Low 1–3'], [5, 'Moderate 4–6'], [8, 'High 7–10'], [11, 'Very high 10+']].map(([v, l]) => `<span class="pill ${aqhiRisk(v).cls}">${l}</span>`).join('')
+        : [1, 2, 3, 4].map((i) => levelPill(i)).join('')}</div>
+      <p class="disclaimer">Tap a circle for details; zoom in to see names. Map © OpenStreetMap contributors.</p>`;
+  }
+
+  const sort = settings.regionSort || 'region';
   const row = (r) => {
     const d = r.days[0]; const a = r.aqNow?.value ?? d.aqhi;
     return `<button class="rrow" data-community="${r.community.id}">
-      <span class="rname">${esc(r.community.name)}${settings.favourites.includes(r.community.id) ? ' <span class="star">★</span>' : ''}</span>
+      <span class="rname">${esc(r.community.name)}${settings.favourites.includes(r.community.id) ? ' <span class="star">★</span>' : ''}${r.community.covers.length ? `<small>${esc(r.community.covers.map((x) => x.name).join(', '))}</small>` : ''}</span>
       <span class="rcell">${shortPill(d.outlook)}</span>
       <span class="rcell">${shortPill(d.pollen.max)}</span>
       <span class="rcell">${shortPill(d.mold)}</span>
       <span class="rcell">${a != null ? aqPill(a) : '–'}</span></button>`;
   };
-  const head = `<div class="rrow rhead"><span class="rname">Community</span><span class="rcell">Overall</span><span class="rcell">Pollen</span><span class="rcell">Mould</span><span class="rcell">AQHI</span></div>`;
+  const head = `<div class="rrow rhead"><span class="rname">Area</span><span class="rcell">Overall</span><span class="rcell">Pollen</span><span class="rcell">Mould</span><span class="rcell">AQHI</span></div>`;
   let body;
   if (sort === 'worst') {
     rows.sort((a, b) => b.days[0].outlook - a.days[0].outlook || (b.aqNow?.value ?? 0) - (a.aqNow?.value ?? 0));
@@ -379,14 +405,71 @@ function renderRegion() {
   } else {
     body = REGIONS.map((reg) => `<h3 class="sub">${esc(reg)}</h3><section class="card list">${head}${rows.filter((r) => r.community.region === reg).map(row).join('')}</section>`).join('');
   }
-  const t = rows[0]?.fetchedAt;
-  return `<h2 class="h">Across Eastern Ontario · today</h2>
-    <div class="seg" role="tablist">
+  return `<h2 class="h">Today across the region</h2>${modeSeg}
+    <div class="seg small-seg" role="tablist">
       ${[['region', 'By area'], ['worst', 'Worst first'], ['az', 'A–Z']].map(([k, l]) => `<button data-sort="${k}" class="${sort === k ? 'on' : ''}">${l}</button>`).join('')}
     </div>
-    ${t ? `<div class="status">${state.regionLoading ? 'Updating…' : `Updated ${ago(t)}`}</div>` : ''}
+    ${status}
     ${body}
-    <p class="disclaimer">Tap a community to open it. AQHI is Environment Canada’s 10 km air quality analysis for each community, or the station reading in Ottawa, Cornwall and Kingston.</p>`;
+    <p class="disclaimer">Tap an area to open it. Eastern Ontario air quality is Environment Canada’s 10 km local analysis (station readings in Ottawa, Cornwall and Kingston). Other cities use their official Environment Canada stations.</p>`;
+}
+
+// ---------- Map (Leaflet + OpenStreetMap, loaded only when the map is opened) ----------
+const METRICS = {
+  outlook: { label: 'Overall', value: (r) => r.days[0].outlook },
+  pollen: { label: 'Pollen', value: (r) => r.days[0].pollen.max },
+  mold: { label: 'Mould', value: (r) => r.days[0].mold },
+  aqhi: { label: 'AQHI', value: (r) => r.aqNow?.value ?? r.days[0].aqhi, aq: true },
+};
+let leafletLoading = null;
+function ensureLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (leafletLoading) return leafletLoading;
+  leafletLoading = new Promise((resolve, reject) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js' });
+    js.onload = resolve; js.onerror = () => { leafletLoading = null; reject(new Error('map library failed')); };
+    document.head.append(css, js);
+  });
+  return leafletLoading;
+}
+const boundsOf = (list) => list.map((c) => [c.lat, c.lon]);
+
+function mountMap() {
+  const el = $('#map');
+  if (!el || !Array.isArray(state.region)) return;
+  if (!window.L) {
+    ensureLeaflet().then(mountMap).catch(() => { el.innerHTML = '<p class="muted" style="padding:16px">The map couldn’t load. Check your connection, or use the list view.</p>'; });
+    return;
+  }
+  const L = window.L;
+  if (state.map) { try { state.mapView = { center: state.map.getCenter(), zoom: state.map.getZoom() }; state.map.remove(); } catch {} }
+  const map = L.map(el, { zoomSnap: 0.5, attributionControl: true });
+  state.map = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 13, minZoom: 3, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  if (state.mapView) map.setView(state.mapView.center, state.mapView.zoom);
+  else map.fitBounds(boundsOf(HOME_AREAS), { padding: [18, 18] });
+
+  const metric = METRICS[settings.mapMetric || 'outlook'];
+  for (const r of state.region) {
+    if (!r.days?.[0]) continue;
+    const v = metric.value(r);
+    const cls = v == null ? 'lv0' : metric.aq ? aqhiRisk(v).cls : levelClass(v);
+    const text = metric.aq ? aqhiText(v) : '';
+    const c = r.community;
+    const icon = L.divIcon({ className: '', html: `<div class="mk ${cls} ${c.id === settings.communityId ? 'sel' : ''}">${text}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
+    const d = r.days[0]; const a = r.aqNow?.value ?? d.aqhi;
+    L.marker([c.lat, c.lon], { icon, title: c.name, keyboard: true }).addTo(map)
+      .bindTooltip(esc(c.name.replace(' (Downtown)', '')), { permanent: true, direction: 'bottom', offset: [0, 10], className: 'mk-label' })
+      .bindPopup(`<div class="pop"><b>${esc(c.name)}</b>
+        <div class="pop-grid"><span>Overall</span>${shortPill(d.outlook)}<span>Pollen</span>${shortPill(d.pollen.max)}<span>Mould</span>${shortPill(d.mold)}<span>AQHI</span>${a != null ? aqPill(a) : '–'}</div>
+        <button class="btn primary" data-community="${c.id}">Open ${esc(c.name.replace(' (Downtown)', ''))} ›</button></div>`,
+        { maxWidth: 220, keepInView: true, autoPanPadding: [16, 16] });
+  }
+  const labels = () => el.classList.toggle('hide-labels', map.getZoom() < 7.5);
+  map.on('zoomend', labels); labels();
 }
 
 // ---------- Journal ----------
@@ -519,10 +602,11 @@ function renderMore() {
     </section>
     <section class="card about">
       <div class="tile-h">Where the numbers come from</div>
-      <p><b>Air quality (AQHI)</b>: for each community, Environment and Climate Change Canada’s Regional Air Quality Analysis (a 10 km grid that blends station measurements with ECCC’s air quality model, including FireWork wildfire smoke). In Ottawa, Cornwall and Kingston the official station reading is used directly. Forecast days come from ECCC’s regional air quality forecast (about 3 days), then the CAMS model via Open-Meteo.</p>
-      <p><b>Pollen</b>: ${CONFIG.GOOGLE_POLLEN_KEY ? 'Google Pollen API.' : 'an estimate based on typical Eastern Ontario tree, grass and ragweed seasons, adjusted daily for rain, temperature, wind and the first hard frost, shifted for latitude (later near Pembroke, earlier near Kingston), and adjusted for the land around each community: farmland raises ragweed and grass, forest raises tree pollen, the city core lowers most. No free public pollen feed exists for this region.'}</p>
+      <p><b>Air quality (AQHI)</b>: for each community, Environment and Climate Change Canada’s Regional Air Quality Analysis (a 10 km grid that blends station measurements with ECCC’s air quality model, including FireWork wildfire smoke). In Ottawa, Cornwall and Kingston the official station reading is used directly, as it is in Toronto, Halifax, Calgary and Vancouver. Montréal uses the local analysis now and its official forecast. Forecast days come from ECCC’s regional air quality forecast (about 3 days), then the CAMS model via Open-Meteo.</p>
+      <p><b>Pollen</b>: ${CONFIG.GOOGLE_POLLEN_KEY ? 'Google Pollen API.' : 'an estimate based on typical Eastern Ontario tree, grass and ragweed seasons, adjusted daily for rain, temperature, wind and the first hard frost, shifted for latitude (later near Pembroke, earlier near Kingston), and adjusted for the land around each community: farmland raises ragweed and grass, forest raises tree pollen, the city core lowers most. Toronto, Montréal, Halifax, Calgary and Vancouver each use their own season profile (for example, Vancouver’s tree pollen starts in February, and Calgary and Halifax see little ragweed). No free public pollen feed exists for this region.'}</p>
       <p><b>Mould</b>: an estimate of outdoor spores based on season, temperature, humidity, recent rain, snow cover, fall leaf litter and surrounding land (harvest dust raises it around farmland). Few places publish mould counts, so treat it as a guide.</p>
       <p><b>Weather</b>: Open-Meteo (Environment Canada GEM and other models).</p>
+      <p><b>Areas</b>: nearby small towns share the same air quality grid, weather and land type, so they’re grouped into ${COMMUNITIES.length} areas across the region. Each area lists the places it covers.</p>
       <p class="muted small">EOAR ${CONFIG.VERSION} · Not medical advice.</p>
       <button class="link" id="clearCache">Clear cached forecasts</button>
     </section>`;
@@ -554,7 +638,11 @@ const VIEWS = { today: renderToday, forecast: renderForecast, region: renderRegi
 function render(fromData = false) {
   renderHeader();
   const formView = ['journal', 'shots', 'more'].includes(settings.view);
-  if (!(fromData && formView)) $('#view').innerHTML = VIEWS[settings.view]();
+  if (!(fromData && formView)) {
+    if (state.map && !(settings.view === 'region' && settings.regionMode === 'map')) { try { state.map.remove(); } catch {} state.map = null; }
+    $('#view').innerHTML = VIEWS[settings.view]();
+    if (settings.view === 'region' && settings.regionMode === 'map') mountMap();
+  }
   $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.view === settings.view));
 }
 
@@ -564,7 +652,8 @@ function go(view) {
 }
 
 function setCommunity(id) {
-  if (!byId(id) || id === settings.communityId) { if (settings.view === 'region') go('today'); return; }
+  id = byId(id)?.id;
+  if (!id || id === settings.communityId) { if (settings.view === 'region') go('today'); return; }
   settings.communityId = id; saveSettings();
   state.current = null;
   if (settings.view === 'region') settings.view = 'today';
@@ -600,6 +689,12 @@ document.addEventListener('click', async (ev) => {
   if (t.dataset.community) return setCommunity(t.dataset.community);
   if (t.dataset.info) return showInfo(t.dataset.info);
   if (t.dataset.sort) { settings.regionSort = t.dataset.sort; saveSettings(); return render(); }
+  if (t.dataset.rmode) { settings.regionMode = t.dataset.rmode; saveSettings(); return render(); }
+  if (t.dataset.metric) { settings.mapMetric = t.dataset.metric; saveSettings(); return render(); }
+  if (t.dataset.mapzoom && state.map) {
+    state.map.fitBounds(boundsOf(t.dataset.mapzoom === 'home' ? HOME_AREAS : COMMUNITIES), { padding: [18, 18] });
+    return;
+  }
   if (t.dataset.unfav) { settings.favourites = settings.favourites.filter((f) => f !== t.dataset.unfav); saveSettings(); return render(); }
   if (t.dataset.delJournal) {
     if (!confirm('Delete this journal entry?')) return;

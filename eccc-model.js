@@ -9,9 +9,12 @@ import { COMMUNITIES } from './communities.js';
 import { aqhiFromConcentrations } from './models.js';
 
 const GEOMET = 'https://geo.weather.gc.ca/geomet';
-const BBOX = 'subset=lat(43.8,46.4)&subset=lon(-78.3,-74.1)';
+const BBOX = 'subset=lat(43.8,46.4)&subset=lon(-78.3,-74.1)'; // Eastern Ontario
+// Montréal has an official AQHI forecast but no live station reading, so its "now"
+// value also comes from the analysis grid (a small extra box).
+const EXTRA_NOW_BOXES = ['subset=lat(45.2,45.8)&subset=lon(-74.0,-73.2)'];
 const TZ = 'America/Toronto';
-const PREFIX = 'eoar4_cache:grid:';
+const PREFIX = 'eoar4_cache:grid2:'; // v2: sampled at areas
 const ANALYSIS = { pm25: 'RDAQA-FW_10km_PM2.5', o3: 'RDAQA_10km_O3', no2: 'RDAQA_10km_NO2' };
 const FORECAST = { pm25: 'RAQDPS.SFC_PM2.5', o3: 'RAQDPS.SFC_O3', no2: 'RAQDPS.SFC_NO2' };
 const LOCAL_HOURS = [8, 11, 14, 17, 20]; // forecast sample times (local), covers morning, afternoon ozone peak and evening
@@ -45,6 +48,7 @@ async function layerTimes(layer, force) {
 
 // Parse an ESRI ASCII grid (possibly wrapped in a multipart response) and sample every community.
 function sampleGrid(text, scale) {
+  // Communities outside the returned grid are left out (never wrapped into a wrong cell).
   const i = text.indexOf('ncols'); if (i < 0) throw new Error('not a grid');
   const lines = text.slice(i).split('--wcs')[0].trim().split(/\r?\n/);
   const h = {}; let k = 0;
@@ -55,6 +59,7 @@ function sampleGrid(text, scale) {
   for (const c of COMMUNITIES) {
     const col = Math.floor((c.lon - h.xllcorner) / dx);
     const row = h.nrows - 1 - Math.floor((c.lat - h.yllcorner) / dy);
+    if (col < 0 || col >= h.ncols || row < 0 || row >= h.nrows) continue;
     const v = vals[row * h.ncols + col];
     out[c.id] = v == null || Number.isNaN(v) || v === h.nodata_value || v < 0 ? null : Math.round(v * scale * 100) / 100;
   }
@@ -62,10 +67,10 @@ function sampleGrid(text, scale) {
 }
 
 // PM2.5 comes in kg/m³ → µg/m³ (×1e9). O3/NO2 come in mol/mol → ppb (×1e9).
-async function grid(coverage, time, ref, force) {
-  const key = `${coverage}|${time}|${ref || ''}`;
+async function grid(coverage, time, ref, force, box = BBOX) {
+  const key = `${coverage}|${time}|${ref || ''}|${box === BBOX ? '' : box}`;
   if (!force) { const c = readCache(key, (ref ? 3 : 1) * 3600 * 1000); if (c) return c; }
-  const url = `${GEOMET}?service=WCS&version=2.0.1&request=GetCoverage&coverageId=${encodeURIComponent(coverage)}&${BBOX}&format=image/x-aaigrid&time=${time}${ref ? '&dim_reference_time=' + ref : ''}`;
+  const url = `${GEOMET}?service=WCS&version=2.0.1&request=GetCoverage&coverageId=${encodeURIComponent(coverage)}&${box}&format=image/x-aaigrid&time=${time}${ref ? '&dim_reference_time=' + ref : ''}`;
   const data = sampleGrid(await fetchText(url), 1e9);
   writeCache(key, data);
   return data;
@@ -104,7 +109,9 @@ export async function getLocalNow({ force } = {}) {
   const latest = Date.parse(caps.def);
   const times = [0, 1, 2].map((h) => iso(latest - h * 3600e3)).filter((t) => Date.parse(t) >= Date.parse(caps.start));
   const jobs = [];
-  for (const t of times) for (const k of ['pm25', 'o3', 'no2']) jobs.push(() => grid(ANALYSIS[k], t, null, force).then((g) => ({ t, k, g })));
+  for (const box of [BBOX, ...EXTRA_NOW_BOXES]) {
+    for (const t of times) for (const k of ['pm25', 'o3', 'no2']) jobs.push(() => grid(ANALYSIS[k], t, null, force, box).then((g) => ({ t, k, g })));
+  }
   const res = (await pool(jobs)).filter(Boolean);
   if (!res.length) throw new Error('analysis unavailable');
   const avg = (k) => {

@@ -54,6 +54,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .select-wrap select option, .select-wrap select optgroup { color: #000; }
 .icon-btn { flex: none; width: 44px; border: 0; border-radius: 12px; background: rgba(255,255,255,.16); color: #fff; font-size: 20px; cursor: pointer; }
 .icon-btn.starred { color: #fde047; }
+.covers { font-size: 13px; opacity: .85; margin-top: 6px; }
 .chips { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
 .chips:empty { display: none; }
 .chip { border: 1px solid rgba(255,255,255,.35); background: transparent; color: #fff; border-radius: 999px; padding: 4px 12px; font-size: 14px; white-space: nowrap; cursor: pointer; }
@@ -144,6 +145,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .rrow:first-child { border-top: 0; }
 .rhead { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; cursor: default; }
 .rname { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rname small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .rcell { text-align: center; }
 .rcell .pill { font-size: 11px; padding: 2px 6px; }
 .star { color: #d4a106; }
@@ -210,3 +212,22 @@ legend { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
   .hero-level { font-size: 34px; }
   .rname { font-size: 13px; }
 }
+
+/* Region map */
+.small-seg button { padding: 6px; font-size: 13px; }
+.map-wrap { padding: 0; overflow: hidden; position: relative; }
+#map { height: 55vh; min-height: 320px; isolation: isolate; width: 100%; background: var(--surface-2); }
+.map-zoom { display: flex; gap: 6px; align-items: center; }
+.chip-btn { border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 600; background: var(--surface); cursor: pointer; }
+.mk { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #fff;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); background: var(--lv0); }
+.mk.lv1 { background: var(--lv1); } .mk.lv2 { background: var(--lv2); color: #231a00; } .mk.lv3 { background: var(--lv3); } .mk.lv4 { background: var(--lv4); }
+.mk.aq-low { background: var(--aq-low); } .mk.aq-mod { background: var(--aq-mod); color: #231a00; } .mk.aq-high { background: var(--aq-high); } .mk.aq-vhigh { background: var(--aq-vhigh); }
+.mk.sel { outline: 3px solid #0f1f17; outline-offset: 1px; }
+.leaflet-tooltip.mk-label { background: rgba(255,255,255,.9); border: 0; box-shadow: none; padding: 0 4px; font-size: 11px; font-weight: 600; color: #0f1f17; }
+.leaflet-tooltip.mk-label::before { display: none; }
+.hide-labels .mk-label { display: none; }
+.pop { display: grid; gap: 6px; min-width: 150px; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.pop-grid { display: grid; grid-template-columns: auto auto; gap: 4px 10px; align-items: center; justify-items: start; }
+.pop .btn { padding: 8px; }
+.leaflet-container .pop .muted { color: #5b6b63; }
