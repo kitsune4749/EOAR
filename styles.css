@@ -93,6 +93,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .big { font-size: 40px; font-weight: 800; line-height: 1.1; margin: 2px 0 6px; }
 .big .pill { font-size: 17px; padding: 5px 12px; }
 .tile-sub { margin-bottom: 6px; }
+.pollutants { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--muted); }
+.pollutants b { color: var(--text); font-weight: 650; }
 .src { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .aq-low-text { color: var(--aq-low); } .aq-mod-text { color: var(--aq-mod); } .aq-high-text { color: var(--aq-high); } .aq-vhigh-text { color: var(--aq-vhigh); }
 

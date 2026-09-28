@@ -33,15 +33,33 @@ const SEASONS = {
   weed:  { a: 212, b: 230, c: 255, e: 285, peak: 4 },
 };
 
+// How the surrounding land changes local pollen/mould relative to a regional average.
+// These are informed estimates (ragweed and grass thrive on open farmland and roadsides;
+// forests add tree pollen; city cores have less of everything but street trees).
+export const LAND_FACTORS = {
+  urban:    { tree: 0.9,  grass: 0.8,  weed: 0.7,  mold: 0.9 },
+  suburban: { tree: 1.0,  grass: 0.95, weed: 0.9,  mold: 1.0 },
+  farm:     { tree: 0.9,  grass: 1.15, weed: 1.3,  mold: 1.1 },
+  mixed:    { tree: 1.1,  grass: 1.05, weed: 1.05, mold: 1.05 },
+  forest:   { tree: 1.25, grass: 0.8,  weed: 0.75, mold: 1.05 },
+};
+
 /**
  * Estimate pollen for one day from season + weather.
  * day: { date, tmax, tmin, precip, windMax }
- * ctx: { killingFrostBefore: boolean } — hard frost already happened this fall
+ * ctx: { killingFrostBefore, land, lat }
+ *   Seasons shift with latitude: roughly 3 days later per 0.5° north of Ottawa
+ *   (Pembroke later, Kingston earlier thanks to Lake Ontario).
  */
 export function estimatePollen(day, ctx = {}) {
-  const doy = dayOfYear(day.date);
+  // Spring seasons (trees, grass) shift with latitude. Ragweed is triggered by day length
+  // and ended by frost (handled via the weather), so it isn't shifted.
+  const shift = ctx.lat ? Math.round((ctx.lat - 45.4) * 6) : 0;
+  const doyBase = dayOfYear(day.date);
+  const lf = LAND_FACTORS[ctx.land] || LAND_FACTORS.suburban;
   const out = {};
   for (const [type, s] of Object.entries(SEASONS)) {
+    const doy = type === 'weed' ? doyBase : doyBase - shift;
     let v = trapezoid(doy, s.a, s.b, s.c, s.e) * s.peak;
     // Rain washes pollen out of the air.
     if (day.precip >= 8) v *= 0.3;
@@ -56,7 +74,7 @@ export function estimatePollen(day, ctx = {}) {
     // Warm, dry and breezy days spread more pollen.
     if (day.precip < 1 && day.windMax >= 20 && day.tmax >= 18) v *= 1.15;
     if (type === 'weed' && ctx.killingFrostBefore) v *= 0.15;
-    out[type] = clamp(v);
+    out[type] = clamp(v * lf[type]);
   }
   out.max = Math.max(out.tree, out.grass, out.weed);
   out.main = Object.entries({ tree: out.tree, grass: out.grass, weed: out.weed })
@@ -68,7 +86,7 @@ export function estimatePollen(day, ctx = {}) {
  * Estimate outdoor mould spores (Alternaria, Cladosporium, etc.).
  * day: { date, tmax, tmin, precip, rhMean, rainPrev3, snowDepth }
  */
-export function estimateMold(day) {
+export function estimateMold(day, ctx = {}) {
   const m = Number(day.date.slice(5, 7));
   const seasonByMonth = [0, 0.15, 0.15, 0.3, 0.55, 0.7, 0.85, 1, 1, 1, 0.95, 0.65, 0.3];
   let v = seasonByMonth[m];
@@ -92,7 +110,7 @@ export function estimateMold(day) {
   if (doy >= 265 && doy <= 315 && t >= 5) v *= 1.1;
   // Scaled so a typical warm, humid fall day lands around High,
   // and only damp, mild days after rain reach Very high.
-  return clamp(v * 2.4);
+  return clamp(v * 2.4 * (LAND_FACTORS[ctx.land] || LAND_FACTORS.suburban).mold);
 }
 
 // Canada's AQHI formula (Stieb et al. 2008) using 3-hour averages.

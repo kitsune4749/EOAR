@@ -91,6 +91,29 @@ export const COMMUNITIES = [
   C('napanee', 'Napanee', 'Kingston & Frontenac', 44.2500, -76.9500),
 ];
 
+// Surrounding land type, used to adjust pollen and mould estimates.
+//   urban    – dense city core: less ragweed/grass, some street trees
+//   suburban – lawns, parks, some open lots
+//   farm     – open farmland and roadsides: ragweed and grass thrive, harvest dust raises fall mould
+//   mixed    – farmland mixed with woodlots (Ottawa Valley, Lanark edges)
+//   forest   – Canadian Shield / heavily forested: more tree pollen, less ragweed
+const LAND = {
+  urban: ['ottawa'],
+  suburban: ['orleans', 'kanata', 'nepean', 'barrhaven', 'stittsville', 'rockland', 'hawkesbury', 'cornwall', 'brockville',
+    'kingston', 'amherstview', 'pembroke', 'petawawa', 'smiths-falls', 'carleton-place', 'arnprior', 'gananoque', 'napanee', 'kemptville', 'renfrew', 'perth'],
+  farm: ['embrun', 'russell', 'limoges', 'casselman', 'st-isidore', 'bourget', 'clarence-creek', 'plantagenet', 'alfred', 'lorignal',
+    'vankleek-hill', 'navan', 'cumberland', 'metcalfe', 'greely', 'osgoode', 'manotick', 'richmond', 'winchester', 'chesterville', 'crysler', 'finch',
+    'maxville', 'alexandria', 'lancaster', 'morrisburg', 'iroquois', 'ingleside', 'long-sault', 'cardinal', 'prescott'],
+  mixed: ['carp', 'almonte', 'merrickville', 'athens', 'cobden', 'eganville', 'lanark'],
+  forest: ['westport', 'sharbot-lake', 'sydenham'],
+};
+export const LAND_LABELS = {
+  urban: 'the city core', suburban: 'suburban surroundings', farm: 'surrounding farmland',
+  mixed: 'mixed farmland and woodlots', forest: 'surrounding forest',
+};
+for (const [type, ids] of Object.entries(LAND)) for (const id of ids) { const c = COMMUNITIES.find((x) => x.id === id); if (c) c.land = type; }
+for (const c of COMMUNITIES) c.land ||= 'suburban';
+
 export const byId = (id) => COMMUNITIES.find((c) => c.id === id);
 
 export function distanceKm(aLat, aLon, bLat, bLon) {

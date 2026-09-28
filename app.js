@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
-import { COMMUNITIES, REGIONS, byId, nearestCommunity } from './communities.js';
+import { COMMUNITIES, REGIONS, byId, nearestCommunity, LAND_LABELS } from './communities.js';
+import { getLocalNow, getLocalForecast } from './eccc-model.js';
 import { getWeather, getAirModel, getOfficialAqhi, nearestStation, getGooglePollen, pruneCache } from './api.js';
 import {
   estimatePollen, estimateMold, aqhiFromConcentrations, aqhiRisk, aqhiText,
@@ -71,7 +72,14 @@ function migrateOld() {
 }
 
 // ---------------- state ----------------
-const state = { current: null, loading: false, region: null, regionLoading: false, stations: null };
+const state = { current: null, loading: false, region: null, regionLoading: false, stations: null, local: null };
+
+// Environment Canada's 10 km analysis/forecast, shared by all communities.
+async function loadLocal(force) {
+  const [n, f] = await Promise.allSettled([getLocalNow({ force }), getLocalForecast({ force })]);
+  state.local = { now: n.status === 'fulfilled' ? n.value : state.local?.now || null, fc: f.status === 'fulfilled' ? f.value : state.local?.fc || null };
+  return state.local;
+}
 
 // ---------------- data assembly ----------------
 function hourlyAqhi(air) {
@@ -88,7 +96,7 @@ function hourlyAqhi(air) {
   return { byHour, dailyMax };
 }
 
-function buildDays(w) {
+function buildDays(w, c) {
   const d = w.daily; const today = todayStr();
   const snow = w.hourly?.snow_depth?.[0] ?? 0;
   const days = [];
@@ -101,15 +109,15 @@ function buildDays(w) {
       precip: d.precipitation_sum[i] ?? 0, pop: d.precipitation_probability_max?.[i],
       windMax: d.wind_speed_10m_max[i] ?? 0, rhMean: d.relative_humidity_2m_mean?.[i], rainPrev3, snowDepth: snow,
     };
-    day.pollen = estimatePollen(day, { killingFrostBefore: frost });
-    day.mold = estimateMold(day);
+    day.pollen = estimatePollen(day, { killingFrostBefore: frost, land: c.land, lat: c.lat });
+    day.mold = estimateMold(day, { land: c.land });
     if (Number(date.slice(5, 7)) >= 8 && day.tmin != null && day.tmin <= -2) frost = true;
     days.push(day);
   }
   return days;
 }
 
-function assemble(community, weatherR, airR, stations, gPollen) {
+function assemble(community, weatherR, airR, stations, gPollen, local) {
   const w = weatherR?.data?.[0];
   const air = airR?.data?.[0];
   const aq = hourlyAqhi(air);
@@ -117,11 +125,19 @@ function assemble(community, weatherR, airR, stations, gPollen) {
   const fcStation = stations ? nearestStation(stations.filter((x) => Object.keys(x.forecast || {}).length), community.lat, community.lon) : null;
   const fresh = station?.obsTime && Date.now() - new Date(station.obsTime) < 4 * 3600 * 1000;
 
+  // Best source first: a station in town (≤15 km) → Environment Canada's 10 km analysis
+  // for this exact spot → a more distant station → the coarse global model.
+  const id = community.id;
+  const localNow = local?.now?.aqhi?.[id];
+  const p = local?.now?.pollutants;
+  const pollutants = p && p.pm[id] != null ? { pm: p.pm[id], o3: p.o3[id], no2: p.no2[id] } : null;
   let aqNow = null;
-  if (station && station.aqhi != null && fresh) aqNow = { value: station.aqhi, source: 'official', station };
+  if (station && station.aqhi != null && fresh && station.km <= 15) aqNow = { value: station.aqhi, source: 'official', station, pollutants };
+  else if (localNow != null) aqNow = { value: localNow, source: 'local', station: fresh ? station : null, pollutants };
+  else if (station && station.aqhi != null && fresh) aqNow = { value: station.aqhi, source: 'official', station };
   else if (aq.byHour[nowHourStr()] != null) aqNow = { value: aq.byHour[nowHourStr()], source: 'model' };
 
-  const allDays = w ? buildDays(w) : [];
+  const allDays = w ? buildDays(w, community) : [];
   const days = allDays.filter((d) => d.date >= todayStr());
   for (const day of allDays) {
     if (gPollen?.[day.date]) {
@@ -132,8 +148,11 @@ function assemble(community, weatherR, airR, stations, gPollen) {
       day.pollenSource = 'google';
     } else day.pollenSource = 'estimate';
     const off = fcStation?.forecast?.[day.date];
-    day.aqhi = off ?? aq.dailyMax[day.date] ?? null;
-    day.aqhiSource = off != null ? 'official' : day.aqhi != null ? 'model' : null;
+    const loc = local?.fc?.daily?.[id]?.[day.date];
+    if (off != null && fcStation.km <= 15) { day.aqhi = off; day.aqhiSource = 'official'; }
+    else if (loc != null) { day.aqhi = loc; day.aqhiSource = 'local'; }
+    else if (off != null) { day.aqhi = off; day.aqhiSource = 'official'; }
+    else { day.aqhi = aq.dailyMax[day.date] ?? null; day.aqhiSource = day.aqhi != null ? 'model' : null; }
     day.outlook = outlook(day.pollen.max, day.mold, day.aqhi);
   }
   if (days[0] && aqNow) days[0].outlook = outlook(days[0].pollen.max, days[0].mold, Math.max(aqNow.value, days[0].aqhi ?? 0));
@@ -146,11 +165,12 @@ function assemble(community, weatherR, airR, stations, gPollen) {
 async function refresh(force = false) {
   const community = byId(settings.communityId);
   state.loading = true; render(true);
-  const [weatherR, airR, offR, gR] = await Promise.allSettled([
+  const [weatherR, airR, offR, gR, locR] = await Promise.allSettled([
     getWeather([community], { force }),
     getAirModel([community], { force }),
     getOfficialAqhi({ force }),
     getGooglePollen(community, { force }),
+    loadLocal(force),
   ]);
   if (offR.status === 'fulfilled') state.stations = offR.value.stations;
   if (weatherR.status === 'rejected' && airR.status === 'rejected') {
@@ -159,8 +179,8 @@ async function refresh(force = false) {
     state.current = assemble(community,
       weatherR.status === 'fulfilled' ? weatherR.value : null,
       airR.status === 'fulfilled' ? airR.value : null,
-      state.stations, gR.status === 'fulfilled' ? gR.value : null);
-    state.current.officialOk = offR.status === 'fulfilled';
+      state.stations, gR.status === 'fulfilled' ? gR.value : null, state.local);
+    state.current.officialOk = offR.status === 'fulfilled' || !!state.local?.now;
   }
   state.loading = false; render(true);
 }
@@ -173,13 +193,14 @@ async function loadRegion(force = false) {
       getWeather(COMMUNITIES, { force, pastDays: 40, forecastDays: 1 }),
       getAirModel(COMMUNITIES, { force, forecastDays: 1 }),
       state.stations ? Promise.resolve({ stations: state.stations }) : getOfficialAqhi({ force }),
+      state.local?.now && !force ? Promise.resolve(state.local) : loadLocal(force),
     ]);
     if (wR.status === 'rejected') throw wR.reason;
     if (offR.status === 'fulfilled') state.stations = offR.value.stations;
     state.region = COMMUNITIES.map((c, i) => assemble(c,
       { data: [wR.value.data[i]], fetchedAt: wR.value.fetchedAt, stale: wR.value.stale },
       aR.status === 'fulfilled' ? { data: [aR.value.data[i]], fetchedAt: aR.value.fetchedAt } : null,
-      state.stations, null));
+      state.stations, null, state.local));
   } catch { state.region = 'error'; }
   state.regionLoading = false; render(true);
 }
@@ -245,8 +266,11 @@ function renderToday() {
   const aqRisk = aqhiRisk(aq?.value);
   const aqSrc = aq?.source === 'official'
     ? `Environment Canada · ${esc(aq.station.name)} station${aq.station.km > 5 ? ` (${Math.round(aq.station.km)} km)` : ''}`
+    : aq?.source === 'local'
+    ? `Environment Canada local analysis (10 km)${aq.station ? `<br>${esc(aq.station.name)} station: ${aqhiText(aq.station.aqhi)} (${Math.round(aq.station.km)} km)` : ''}`
     : aq ? (s.officialOk === false ? 'Modelled estimate (Environment Canada feed unavailable)' : 'Modelled estimate (no official station nearby)') : 'Unavailable';
-  const pSrc = day.pollenSource === 'google' ? 'Google Pollen' : 'Seasonal estimate adjusted for today’s weather';
+  const pSrc = day.pollenSource === 'google' ? 'Google Pollen' : `Seasonal estimate adjusted for today’s weather and ${LAND_LABELS[s.community.land]}`;
+  const pol = aq?.pollutants;
   return `
     ${statusLine(s)}
     <section class="card hero ${levelClass(day.outlook)}">
@@ -265,13 +289,14 @@ function renderToday() {
         <div class="tile-h">Air quality <button class="info" data-info="aqhi" aria-label="About AQHI">?</button></div>
         <div class="big ${aqRisk.cls}-text">${aqhiText(aq?.value)}</div>
         <div class="tile-sub"><span class="pill ${aqRisk.cls}">${aqRisk.label}</span></div>
+        ${pol ? `<div class="pollutants"><span>Fine particles <b>${pol.pm.toFixed(1)}</b> µg/m³</span><span>Ozone <b>${Math.round(pol.o3)}</b> ppb</span><span>NO₂ <b>${pol.no2.toFixed(1)}</b> ppb</span></div>` : ''}
         <div class="src">AQHI · ${aqSrc}</div>
       </section>
       <section class="card tile">
         <div class="tile-h">Mould spores <button class="info" data-info="mold" aria-label="About mould">?</button></div>
         <div class="big">${levelPill(day.mold)}</div>
         ${bar(day.mold)}
-        <div class="src">Estimate from humidity, rain &amp; season</div>
+        <div class="src">Estimate from humidity, rain, season &amp; ${LAND_LABELS[s.community.land]}</div>
       </section>
     </div>
 
@@ -325,7 +350,7 @@ function renderForecast() {
           <div><span class="muted small">AQHI</span>${d.aqhi != null ? aqPill(d.aqhi) : '<span class="muted">–</span>'}</div>
         </div>
       </section>`).join('')}
-    <p class="disclaimer">AQHI forecasts come from Environment Canada where available, otherwise from the CAMS air quality model (about 5 days ahead). Pollen and mould are estimates.</p>`;
+    <p class="disclaimer">AQHI forecasts come from Environment Canada’s regional air quality forecast for each community (about 3 days), then the CAMS model. Pollen and mould are estimates.</p>`;
 }
 
 function renderRegion() {
@@ -361,7 +386,7 @@ function renderRegion() {
     </div>
     ${t ? `<div class="status">${state.regionLoading ? 'Updating…' : `Updated ${ago(t)}`}</div>` : ''}
     ${body}
-    <p class="disclaimer">Tap a community to open it. AQHI is official where an Environment Canada station is within about 70 km, otherwise modelled.</p>`;
+    <p class="disclaimer">Tap a community to open it. AQHI is Environment Canada’s 10 km air quality analysis for each community, or the station reading in Ottawa, Cornwall and Kingston.</p>`;
 }
 
 // ---------- Journal ----------
@@ -494,9 +519,9 @@ function renderMore() {
     </section>
     <section class="card about">
       <div class="tile-h">Where the numbers come from</div>
-      <p><b>Air quality (AQHI)</b>: Environment and Climate Change Canada’s official Air Quality Health Index from the nearest reporting station (Ottawa, Cornwall, Kingston or Belleville), used within about 70 km. Farther away (e.g. Pembroke, Renfrew, Hawkesbury), and for forecast days beyond tomorrow, the AQHI is calculated with the same formula from the CAMS air quality model via Open-Meteo.</p>
-      <p><b>Pollen</b>: ${CONFIG.GOOGLE_POLLEN_KEY ? 'Google Pollen API.' : 'an estimate based on typical Eastern Ontario tree, grass and ragweed seasons, adjusted daily for rain, temperature, wind and the first hard frost. No free public pollen feed exists for this region.'}</p>
-      <p><b>Mould</b>: an estimate of outdoor spores based on season, temperature, humidity, recent rain, snow cover and fall leaf litter. Few places publish mould counts, so treat it as a guide.</p>
+      <p><b>Air quality (AQHI)</b>: for each community, Environment and Climate Change Canada’s Regional Air Quality Analysis (a 10 km grid that blends station measurements with ECCC’s air quality model, including FireWork wildfire smoke). In Ottawa, Cornwall and Kingston the official station reading is used directly. Forecast days come from ECCC’s regional air quality forecast (about 3 days), then the CAMS model via Open-Meteo.</p>
+      <p><b>Pollen</b>: ${CONFIG.GOOGLE_POLLEN_KEY ? 'Google Pollen API.' : 'an estimate based on typical Eastern Ontario tree, grass and ragweed seasons, adjusted daily for rain, temperature, wind and the first hard frost, shifted for latitude (later near Pembroke, earlier near Kingston), and adjusted for the land around each community: farmland raises ragweed and grass, forest raises tree pollen, the city core lowers most. No free public pollen feed exists for this region.'}</p>
+      <p><b>Mould</b>: an estimate of outdoor spores based on season, temperature, humidity, recent rain, snow cover, fall leaf litter and surrounding land (harvest dust raises it around farmland). Few places publish mould counts, so treat it as a guide.</p>
       <p><b>Weather</b>: Open-Meteo (Environment Canada GEM and other models).</p>
       <p class="muted small">EOAR ${CONFIG.VERSION} · Not medical advice.</p>
       <button class="link" id="clearCache">Clear cached forecasts</button>
@@ -516,7 +541,7 @@ function errorCard(which) {
 }
 
 const INFO = {
-  aqhi: ['Air Quality Health Index', 'Canada’s 1–10+ scale for health risk from air pollution (ozone, fine particles such as wildfire smoke, and nitrogen dioxide). 1–3 low, 4–6 moderate, 7–10 high, above 10 very high. Poor air quality can make allergy and asthma symptoms worse.'],
+  aqhi: ['Air Quality Health Index', 'Canada’s 1–10+ scale for health risk from air pollution (ozone, fine particles such as wildfire smoke, and nitrogen dioxide). 1–3 low, 4–6 moderate, 7–10 high, above 10 very high. Poor air quality can make allergy and asthma symptoms worse. For most communities the value comes from Environment Canada’s local air quality analysis, a 10 km grid that blends station measurements with its air quality model, so each town gets its own reading.'],
   pollen: ['Pollen', 'Tree pollen runs from late March to early June, grass from late May to early August, and ragweed from early August until the first hard frost. Rain clears pollen from the air; warm, dry, windy days raise it. This is an estimate, not a pollen count.'],
   mold: ['Mould spores', 'Outdoor mould spores (e.g. Alternaria, Cladosporium) rise with warmth, humidity and rain, and peak in late summer and fall when leaves decay. Snow cover suppresses them. This is an estimate, not a spore count.'],
 };
