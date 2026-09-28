@@ -1,3 +1,5 @@
+import { FARMLAND } from './farmland.js';
+
 // Areas covered: roughly Pembroke–Hawkesbury and Kingston–Cornwall.
 // Small towns close together share the same air quality grid cell (10 km), weather and
 // land type, so they're grouped into one area named after a main town. Each area lists
@@ -77,6 +79,9 @@ export const COMMUNITIES = [
   CITY('calgary', 'Calgary', 51.0447, -114.0719, 'America/Edmonton', 'calgary'),
   CITY('vancouver', 'Vancouver', 49.2827, -123.1207, 'America/Vancouver', 'vancouver'),
 ];
+
+// Land type comes from the real crop map (farmland.js), not guesses.
+for (const c of COMMUNITIES) if (FARMLAND[c.id]) c.land = FARMLAND[c.id].land;
 
 export const HOME_AREAS = COMMUNITIES.filter((c) => !c.far);
 

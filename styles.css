@@ -262,3 +262,23 @@ legend { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
 .cmp-story { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 13px; }
 .cmp-sec { padding: 8px 0 2px; font-size: 12px; border-top: 2px solid var(--line); }
 .cmp-sec.data b { color: var(--aq-low); } .cmp-sec.est b { color: var(--lv3); }
+
+/* Sourced facts (farm card, crop map) */
+.badge.fact { background: color-mix(in srgb, var(--lv1) 15%, transparent); color: var(--lv1); }
+.sec.fact h3 { color: var(--lv1); }
+.fact-card { border-left: 4px solid var(--lv1); }
+.farm-big { display: flex; gap: 12px; align-items: center; margin: 4px 0; }
+.farm-big b { font-size: 40px; font-weight: 800; line-height: 1; color: var(--lv1); }
+.farm-big span { font-size: 14px; }
+.farm-sec { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; font-size: 14px; }
+.farm-sec p { margin: 4px 0 0; }
+.farm-sec ul { margin: 4px 0 0; padding-left: 18px; }
+.farm-sec li { margin: 2px 0; }
+.src a { color: inherit; }
+.cmp-sec.fact b { color: var(--lv1); }
+.pill.fl0, .mk.fl0 { background: #cbd5d0; color: #1f2d27; }
+.pill.fl1, .mk.fl1 { background: #b7dfb0; color: #1f2d27; }
+.pill.fl2, .mk.fl2 { background: #d9c36a; color: #231a00; }
+.pill.fl3, .mk.fl3 { background: #c98a3a; color: #fff; }
+.pill.fl4, .mk.fl4 { background: #8a5a1f; color: #fff; }
+.mk { font-size: 11px; }

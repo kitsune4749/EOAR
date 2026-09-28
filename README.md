@@ -1,4 +1,4 @@
-# EOAR · Eastern Ontario Air & Allergy (v4.3)
+# EOAR · Eastern Ontario Air & Allergy (v4.4)
 
 A free web app showing the daily allergy outlook for Eastern Ontario, roughly Pembroke to Hawkesbury and Kingston to Cornwall, grouped into 20 areas (nearby small towns share the same data), plus Toronto, Montréal, Halifax, Calgary and Vancouver. It includes:
 
@@ -30,9 +30,9 @@ To update later, upload changed files to the same repo. Phones pick up the new v
 | Other cities | Official ECCC AQHI stations and forecasts (Montréal: local analysis now + official forecast) | City-specific pollen/mould season profiles |
 | Map | Leaflet + OpenStreetMap | Loaded only when the map is opened |
 | Weather | Open-Meteo | Free for non-commercial use |
-| Pollen | Built-in seasonal estimate, adjusted daily for weather, latitude and surrounding land (farm, suburban, urban, forest) | Optional: Google Pollen API (see `config.js`) |
+| Pollen | Built-in seasonal estimate, adjusted daily for weather, latitude and surrounding land type (taken from the AAFC crop map) | Optional: Google Pollen API (see `config.js`) |
 | Mould | Built-in estimate (season, temperature, humidity, rain, snow, leaf litter) | No public mould counts exist for the region |
-| Farm activity | Built-in estimate from the Eastern Ontario farm calendar (manure spreading, tillage, haying, harvest) and weather | Not part of the AQHI; shown with a countryside-vs-Ottawa comparison |
+| Farm activity | Sourced facts, no score: farmland share and crop mix within 10 km (AAFC Annual Crop Inventory 2025), typical farm calendar, latest regional crop report (`farmland.js`), today's weather | Update `CROP_REPORT` in `farmland.js` when a new crop report comes out |
 | Coarse dust | ECCC RDAQA PM10 minus PM2.5 | Shown on Today and in the comparison |
 
 Journal and shot records never leave the phone. Use **More → Download backup** now and then.
@@ -45,6 +45,7 @@ Journal and shot records never leave the phone. Use **More → Download backup**
 - `models.js`: pollen, mould and AQHI calculations
 - `api.js`: data fetching and caching
 - `eccc-model.js`: Environment Canada 10 km air quality analysis and forecast
+- `farmland.js`: real farmland data per area (AAFC crop map) and the latest crop report
 - `app.js`: screens and features
 - `service-worker.js`, `manifest.webmanifest`, icon files: install and offline support. **If you change any files, bump `CACHE` in `service-worker.js`** (e.g. `eoar-v4.0.1`) so phones pick up the update.
 
